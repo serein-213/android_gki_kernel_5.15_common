@@ -117,6 +117,356 @@ log() { echo -e "${GREEN}[INFO] $1${NC}"; }
 warn() { echo -e "${YELLOW}[WARN] $1${NC}"; }
 error() { echo -e "${RED}[ERROR] $1${NC}"; }
 
+# ==============================================================================
+# ARGUMENT PARSING
+# ==============================================================================
+SKIP_BUILD=false
+PACK_AK3=false
+PACK_IMG=false
+
+show_usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --ak3          Only pack anykernel.zip (skip build)"
+    echo "  --img          Only pack boot.img and Image.gz (skip build)"
+    echo "  --help, -h     Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0              # Full build and pack all artifacts"
+    echo "  $0 --ak3       # Only pack anykernel.zip (requires existing build)"
+    echo "  $0 --img       # Only pack boot.img and Image.gz (requires existing build)"
+    exit 0
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --ak3)
+            PACK_AK3=true
+            SKIP_BUILD=true
+            shift
+            ;;
+        --img)
+            PACK_IMG=true
+            SKIP_BUILD=true
+            shift
+            ;;
+        --help|-h)
+            show_usage
+            ;;
+        *)
+            error "Unknown option: $1"
+            show_usage
+            ;;
+    esac
+done
+
+# If no specific pack option is set, pack everything
+if [ "$SKIP_BUILD" = false ]; then
+    PACK_AK3=true
+    PACK_IMG=true
+fi
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+# Find the built kernel Image
+find_kernel_image() {
+    local image_path=$(find "$WORKSPACE_DIR/out" -name Image 2>/dev/null | head -n 1)
+    if [ -z "$image_path" ]; then
+        # Try alternative locations
+        image_path=$(find "$WORKSPACE_DIR" -name Image -path "*/out/*" 2>/dev/null | head -n 1)
+    fi
+    if [ -z "$image_path" ]; then
+        error "Could not find built Kernel Image in $WORKSPACE_DIR"
+        error "Please run the build first or ensure the build completed successfully."
+        exit 1
+    fi
+    echo "$image_path"
+}
+
+# Pack Image.gz and boot.img
+pack_image_artifacts() {
+    log "Packing Image.gz and boot.img..."
+    
+    # Find kernel image
+    IMAGE_PATH=$(find_kernel_image)
+    echo "Kernel Image: $IMAGE_PATH"
+    
+    # Get script directory (kernel source root)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    OUT_DIR="$SCRIPT_DIR/out"
+    
+    # Create output directory
+    mkdir -p "$OUT_DIR"
+    log "Output directory: $OUT_DIR"
+    
+    # 1. Generate Image.gz
+    log "Creating Image.gz..."
+    cp "$IMAGE_PATH" "$OUT_DIR/Image"
+    gzip -f "$OUT_DIR/Image"
+    log "✓ Image.gz created: $OUT_DIR/Image.gz"
+    
+    # 2. Generate boot.img
+    log "Creating boot.img..."
+    BOOT_IMG="$OUT_DIR/boot.img"
+    
+    # Check if mkbootimg is available
+    if ! command -v mkbootimg &> /dev/null; then
+        warn "mkbootimg not found. Trying to use from Android build tools..."
+        # Try to find mkbootimg in common Android locations
+        if [ -f "$WORKSPACE_DIR/prebuilts/misc/linux-x86/libufdt/mkbootimg.py" ]; then
+            MKBOOTIMG_CMD="python3 $WORKSPACE_DIR/prebuilts/misc/linux-x86/libufdt/mkbootimg.py"
+        else
+            error "mkbootimg not found. Please install Android build tools or set up mkbootimg."
+            exit 1
+        fi
+    else
+        MKBOOTIMG_CMD="mkbootimg"
+    fi
+    
+    # Create boot.img with header version 4 (GKI Android 13)
+    $MKBOOTIMG_CMD \
+        --kernel "$IMAGE_PATH" \
+        --header_version 4 \
+        --output "$BOOT_IMG"
+    
+    # Add AVB hash footer if avbtool is available
+    if command -v avbtool &> /dev/null; then
+        log "Adding AVB hash footer..."
+        IMAGE_SIZE=$(stat -c%s "$BOOT_IMG")
+        PADDING=$((2 * 1024 * 1024))  # 2MB
+        PARTITION_SIZE=$((IMAGE_SIZE + PADDING))
+        avbtool add_hash_footer \
+            --image "$BOOT_IMG" \
+            --partition_name boot \
+            --partition_size "$PARTITION_SIZE"
+        log "✓ AVB footer added"
+    else
+        warn "avbtool not found. boot.img created without AVB footer."
+    fi
+    
+    log "✓ boot.img created: $BOOT_IMG"
+}
+
+# Pack anykernel.zip
+pack_anykernel() {
+    log "Packing anykernel.zip..."
+    
+    # Find kernel image
+    IMAGE_PATH=$(find_kernel_image)
+    
+    # Get script directory (kernel source root)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    OUT_DIR="$SCRIPT_DIR/out"
+    
+    # Create output directory
+    mkdir -p "$OUT_DIR"
+    
+    ANYKERNEL_DIR="$OUT_DIR/anykernel_tmp"
+    rm -rf "$ANYKERNEL_DIR"
+    mkdir -p "$ANYKERNEL_DIR/META-INF/com/google/android"
+    
+    # Create update-binary script for AnyKernel
+    cat > "$ANYKERNEL_DIR/META-INF/com/google/android/update-binary" <<'EOF'
+#!/sbin/sh
+# AnyKernel installer script for GKI kernel
+
+OUTFD=$2
+ZIPFILE=$3
+
+ui_print() {
+    echo "ui_print $1" >&$OUTFD
+    echo "ui_print" >&$OUTFD
+}
+
+ui_print " "
+ui_print "AnyKernel GKI Kernel Installer"
+ui_print " "
+
+# Extract kernel image
+ui_print "Extracting kernel..."
+TMPDIR=/tmp/anykernel_$$
+mkdir -p "$TMPDIR"
+cd "$TMPDIR"
+unzip -o "$ZIPFILE" "Image" || {
+    ui_print "Error: Failed to extract Image from zip"
+    exit 1
+}
+
+if [ ! -f "$TMPDIR/Image" ]; then
+    ui_print "Error: Image not found in zip"
+    exit 1
+fi
+
+# Enhanced boot partition detection (boot partition only)
+find_boot_partition() {
+    local boot_part=""
+    
+    # Method 1: Check common by-name paths
+    for path in \
+        "/dev/block/bootdevice/by-name/boot" \
+        "/dev/block/by-name/boot" \
+        "/dev/block/platform/*/by-name/boot" \
+        "/dev/block/platform/*/*/by-name/boot"; do
+        for p in $path; do
+            if [ -e "$p" ]; then
+                boot_part="$p"
+                ui_print "Found boot partition: $boot_part"
+                echo "$boot_part"
+                return 0
+            fi
+        done
+    done
+    
+    # Method 2: Use find to search /dev/block
+    if [ -d "/dev/block" ]; then
+        boot_part=$(find /dev/block -name "boot" 2>/dev/null | head -n 1)
+        if [ -n "$boot_part" ] && [ -e "$boot_part" ]; then
+            ui_print "Found boot partition: $boot_part"
+            echo "$boot_part"
+            return 0
+        fi
+    fi
+    
+    # Method 3: Try to get from lsblk
+    if command -v lsblk &> /dev/null; then
+        boot_part=$(lsblk -n -o NAME,PATH | grep -iE "^boot" | head -n 1 | awk '{print "/dev/block/"$1}')
+        if [ -n "$boot_part" ] && [ -e "$boot_part" ]; then
+            ui_print "Found boot partition via lsblk: $boot_part"
+            echo "$boot_part"
+            return 0
+        fi
+    fi
+    
+    # Method 4: Try getprop (Android system property)
+    if command -v getprop &> /dev/null; then
+        local slot_suffix=$(getprop ro.boot.slot_suffix 2>/dev/null || echo "")
+        local boot_dev=$(getprop ro.boot.bootdevice 2>/dev/null || echo "")
+        if [ -n "$boot_dev" ]; then
+            boot_part="/dev/block/platform/$boot_dev/by-name/boot${slot_suffix}"
+            if [ -e "$boot_part" ]; then
+                ui_print "Found boot partition via getprop: $boot_part"
+                echo "$boot_part"
+                return 0
+            fi
+            # Try without slot suffix
+            boot_part="/dev/block/platform/$boot_dev/by-name/boot"
+            if [ -e "$boot_part" ]; then
+                ui_print "Found boot partition via getprop: $boot_part"
+                echo "$boot_part"
+                return 0
+            fi
+        fi
+    fi
+    
+    return 1
+}
+
+# Try to use magiskboot if available (most reliable method)
+if command -v magiskboot &> /dev/null; then
+    ui_print "Using magiskboot to repack boot image..."
+    
+    # Find boot partition using enhanced detection
+    BOOT_PARTITION=$(find_boot_partition)
+    
+    if [ -z "$BOOT_PARTITION" ] || [ ! -e "$BOOT_PARTITION" ]; then
+        ui_print "Error: Boot partition not found"
+        ui_print "Tried multiple detection methods"
+        ui_print "Please check your device's partition layout"
+        exit 1
+    fi
+    
+    ui_print "Backing up boot partition..."
+    dd if="$BOOT_PARTITION" of="$TMPDIR/boot.img" bs=4096 || {
+        ui_print "Error: Failed to read boot partition"
+        exit 1
+    }
+    
+    ui_print "Unpacking boot image..."
+    magiskboot unpack "$TMPDIR/boot.img" || {
+        ui_print "Error: Failed to unpack boot image"
+        exit 1
+    }
+    
+    ui_print "Replacing kernel..."
+    cp "$TMPDIR/Image" "$TMPDIR/kernel" || {
+        ui_print "Error: Failed to copy kernel"
+        exit 1
+    }
+    
+    ui_print "Repacking boot image..."
+    magiskboot repack "$TMPDIR/boot.img" "$TMPDIR/boot_new.img" || {
+        ui_print "Error: Failed to repack boot image"
+        exit 1
+    }
+    
+    ui_print "Flashing new boot image..."
+    dd if="$TMPDIR/boot_new.img" of="$BOOT_PARTITION" bs=4096 || {
+        ui_print "Error: Failed to write boot partition"
+        exit 1
+    }
+    
+    ui_print " "
+    ui_print "Kernel flashed successfully!"
+    rm -rf "$TMPDIR"
+    exit 0
+fi
+
+# Fallback: Try to use AIK (Android Image Kitchen) if available
+if [ -d "/tmp/AIK" ] || [ -d "/data/local/tmp/AIK" ]; then
+    AIK_DIR="/tmp/AIK"
+    [ -d "/data/local/tmp/AIK" ] && AIK_DIR="/data/local/tmp/AIK"
+    
+    ui_print "Using Android Image Kitchen..."
+    # AIK method would go here
+    ui_print "AIK method not fully implemented"
+fi
+
+# Final fallback: Direct flash (risky, device-specific)
+ui_print "Warning: Using direct flash method (may not work on all devices)"
+ui_print "This method is device-specific and may cause bootloop!"
+
+BOOT_PARTITION=$(find_boot_partition)
+
+if [ -z "$BOOT_PARTITION" ] || [ ! -e "$BOOT_PARTITION" ]; then
+    ui_print "Error: Boot partition not found"
+    ui_print "Please use magiskboot or AIK method"
+    ui_print "Or check your device's partition layout manually"
+    exit 1
+fi
+
+ui_print "Direct flashing kernel (offset may vary by device)..."
+# This is device-specific and may need adjustment
+dd if="$TMPDIR/Image" of="$BOOT_PARTITION" bs=4096 seek=2048 conv=notrunc || {
+    ui_print "Error: Direct flash failed"
+    ui_print "Please use a recovery with magiskboot support"
+    exit 1
+}
+
+ui_print " "
+ui_print "Kernel flashed (direct method)"
+ui_print "If device doesn't boot, restore from backup!"
+
+rm -rf "$TMPDIR"
+EOF
+
+    chmod +x "$ANYKERNEL_DIR/META-INF/com/google/android/update-binary"
+    
+    # Copy kernel image to anykernel directory
+    cp "$IMAGE_PATH" "$ANYKERNEL_DIR/Image"
+    
+    # Create anykernel.zip
+    cd "$ANYKERNEL_DIR"
+    zip -r "$OUT_DIR/anykernel.zip" . > /dev/null
+    cd "$SCRIPT_DIR"
+    rm -rf "$ANYKERNEL_DIR"
+    
+    log "✓ anykernel.zip created: $OUT_DIR/anykernel.zip"
+}
+
 # 1. Dependency Check (Arch Linux)
 log "Checking Dependencies..."
 if [ -f /etc/arch-release ] && ! command -v repo &> /dev/null; then
@@ -272,68 +622,65 @@ else
 fi
 
 # ==============================================================================
-# 10. Build
+# 10. Build (if not skipped)
 # ==============================================================================
-log "Starting Bazel Build..."
+if [ "$SKIP_BUILD" = false ]; then
+    log "Starting Bazel Build..."
 
-# Start temperature monitoring
-start_temp_monitor
+    # Start temperature monitoring
+    start_temp_monitor
 
-# Show initial temperature
-INITIAL_TEMP=$(get_cpu_temp)
-log "Initial CPU temperature: ${INITIAL_TEMP}°C"
+    # Show initial temperature
+    INITIAL_TEMP=$(get_cpu_temp)
+    log "Initial CPU temperature: ${INITIAL_TEMP}°C"
 
-# Note: ccache is configured via build.config.common
-# For Bazel builds, we also pass environment variables via --action_env
-# This ensures ccache settings are available to all build actions
-BAZEL_CCACHE_FLAGS=""
-if command -v ccache &> /dev/null; then
-    BAZEL_CCACHE_FLAGS="--action_env=CCACHE_DIR --action_env=CCACHE_MAXSIZE --action_env=CCACHE_COMPRESS --action_env=CCACHE_COMPRESSLEVEL --action_env=CCACHE_SLOPPINESS"
-    log "ccache environment variables will be passed to Bazel build actions"
-fi
-
-# Set build timestamp for kernel version string
-# This fixes the "Thu Jan 1 00:00:00 UTC 1970" issue
-# SOURCE_DATE_EPOCH is used for reproducible builds, but we want actual build time
-BUILD_TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S %Z")
-KBUILD_BUILD_TIMESTAMP="$BUILD_TIMESTAMP"
-export KBUILD_BUILD_TIMESTAMP
-# Also set SOURCE_DATE_EPOCH to current time (not 0) for proper timestamp
-export SOURCE_DATE_EPOCH=$(date +%s)
-
-# Pass timestamp to Bazel build actions
-BAZEL_TIMESTAMP_FLAGS="--action_env=KBUILD_BUILD_TIMESTAMP --action_env=SOURCE_DATE_EPOCH"
-
-log "Build timestamp: $BUILD_TIMESTAMP"
-
-tools/bazel build $BAZEL_CCACHE_FLAGS $BAZEL_TIMESTAMP_FLAGS //common:kernel_aarch64_dist
-
-# Show ccache statistics after build
-if command -v ccache &> /dev/null && [ -d "$CCACHE_DIR" ]; then
-    log "ccache statistics after build:"
-    ccache -s 2>/dev/null | grep -E "cache hit|cache miss|cache size|files in cache" | sed 's/^/  /' || true
-    
-    # Show cache efficiency
-    HIT_RATE=$(ccache -s 2>/dev/null | grep -oP 'hit rate\s+\K[0-9.]+%' || echo "N/A")
-    if [ "$HIT_RATE" != "N/A" ]; then
-        log "ccache hit rate: $HIT_RATE"
+    # Note: ccache is configured via build.config.common
+    # For Bazel builds, we also pass environment variables via --action_env
+    # This ensures ccache settings are available to all build actions
+    BAZEL_CCACHE_FLAGS=""
+    if command -v ccache &> /dev/null; then
+        BAZEL_CCACHE_FLAGS="--action_env=CCACHE_DIR --action_env=CCACHE_MAXSIZE --action_env=CCACHE_COMPRESS --action_env=CCACHE_COMPRESSLEVEL --action_env=CCACHE_SLOPPINESS"
+        log "ccache environment variables will be passed to Bazel build actions"
     fi
+
+    # Set build timestamp for kernel version string
+    # This fixes the "Thu Jan 1 00:00:00 UTC 1970" issue
+    # SOURCE_DATE_EPOCH is used for reproducible builds, but we want actual build time
+    BUILD_TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S %Z")
+    KBUILD_BUILD_TIMESTAMP="$BUILD_TIMESTAMP"
+    export KBUILD_BUILD_TIMESTAMP
+    # Also set SOURCE_DATE_EPOCH to current time (not 0) for proper timestamp
+    export SOURCE_DATE_EPOCH=$(date +%s)
+
+    # Pass timestamp to Bazel build actions
+    BAZEL_TIMESTAMP_FLAGS="--action_env=KBUILD_BUILD_TIMESTAMP --action_env=SOURCE_DATE_EPOCH"
+
+    log "Build timestamp: $BUILD_TIMESTAMP"
+
+    tools/bazel build $BAZEL_CCACHE_FLAGS $BAZEL_TIMESTAMP_FLAGS //common:kernel_aarch64_dist
+
+    # Show ccache statistics after build
+    if command -v ccache &> /dev/null && [ -d "$CCACHE_DIR" ]; then
+        log "ccache statistics after build:"
+        ccache -s 2>/dev/null | grep -E "cache hit|cache miss|cache size|files in cache" | sed 's/^/  /' || true
+        
+        # Show cache efficiency
+        HIT_RATE=$(ccache -s 2>/dev/null | grep -oP 'hit rate\s+\K[0-9.]+%' || echo "N/A")
+        if [ "$HIT_RATE" != "N/A" ]; then
+            log "ccache hit rate: $HIT_RATE"
+        fi
+    fi
+
+    # Stop temperature monitoring and show summary
+    stop_temp_monitor
+
+    log "Build Complete!"
+else
+    log "Skipping build (pack-only mode)"
 fi
 
-# Stop temperature monitoring and show summary
-stop_temp_monitor
-
-log "Build Complete!"
-# Find Image in workspace out directory (Bazel output)
-IMAGE_PATH=$(find "$WORKSPACE_DIR/out" -name Image 2>/dev/null | head -n 1)
-if [ -z "$IMAGE_PATH" ]; then
-    # Try alternative locations
-    IMAGE_PATH=$(find "$WORKSPACE_DIR" -name Image -path "*/out/*" 2>/dev/null | head -n 1)
-fi
-if [ -z "$IMAGE_PATH" ]; then
-    error "Could not find built Kernel Image in $WORKSPACE_DIR"
-    exit 1
-fi
+# Find and verify kernel image
+IMAGE_PATH=$(find_kernel_image)
 echo "Kernel Image: $IMAGE_PATH"
 
 # Verify version
@@ -345,216 +692,28 @@ fi
 # ==============================================================================
 # POST-BUILD: Generate Output Artifacts
 # ==============================================================================
-log "Generating build artifacts..."
-
-# Get script directory (kernel source root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="$SCRIPT_DIR/out"
 
-# Create output directory
-mkdir -p "$OUT_DIR"
-log "Output directory: $OUT_DIR"
-
-# 1. Generate Image.gz
-log "Creating Image.gz..."
-cp "$IMAGE_PATH" "$OUT_DIR/Image"
-gzip -f "$OUT_DIR/Image"
-log "✓ Image.gz created: $OUT_DIR/Image.gz"
-
-# 2. Generate boot.img
-log "Creating boot.img..."
-BOOT_IMG="$OUT_DIR/boot.img"
-
-# Check if mkbootimg is available
-if ! command -v mkbootimg &> /dev/null; then
-    warn "mkbootimg not found. Trying to use from Android build tools..."
-    # Try to find mkbootimg in common Android locations
-    if [ -f "$WORKSPACE_DIR/prebuilts/misc/linux-x86/libufdt/mkbootimg.py" ]; then
-        MKBOOTIMG_CMD="python3 $WORKSPACE_DIR/prebuilts/misc/linux-x86/libufdt/mkbootimg.py"
-    else
-        error "mkbootimg not found. Please install Android build tools or set up mkbootimg."
-        exit 1
-    fi
-else
-    MKBOOTIMG_CMD="mkbootimg"
+# Pack artifacts based on parameters
+if [ "$PACK_IMG" = true ]; then
+    pack_image_artifacts
 fi
 
-# Create boot.img with header version 4 (GKI Android 13)
-$MKBOOTIMG_CMD \
-    --kernel "$IMAGE_PATH" \
-    --header_version 4 \
-    --output "$BOOT_IMG"
-
-# Add AVB hash footer if avbtool is available
-if command -v avbtool &> /dev/null; then
-    log "Adding AVB hash footer..."
-    IMAGE_SIZE=$(stat -c%s "$BOOT_IMG")
-    PADDING=$((2 * 1024 * 1024))  # 2MB
-    PARTITION_SIZE=$((IMAGE_SIZE + PADDING))
-    avbtool add_hash_footer \
-        --image "$BOOT_IMG" \
-        --partition_name boot \
-        --partition_size "$PARTITION_SIZE"
-    log "✓ AVB footer added"
-else
-    warn "avbtool not found. boot.img created without AVB footer."
+if [ "$PACK_AK3" = true ]; then
+    pack_anykernel
 fi
-
-log "✓ boot.img created: $BOOT_IMG"
-
-# 3. Generate anykernel.zip
-log "Creating anykernel.zip..."
-ANYKERNEL_DIR="$OUT_DIR/anykernel_tmp"
-rm -rf "$ANYKERNEL_DIR"
-mkdir -p "$ANYKERNEL_DIR/META-INF/com/google/android"
-
-# Create update-binary script for AnyKernel
-cat > "$ANYKERNEL_DIR/META-INF/com/google/android/update-binary" <<'EOF'
-#!/sbin/sh
-# AnyKernel installer script for GKI kernel
-
-OUTFD=$2
-ZIPFILE=$3
-
-ui_print() {
-    echo "ui_print $1" >&$OUTFD
-    echo "ui_print" >&$OUTFD
-}
-
-ui_print " "
-ui_print "AnyKernel GKI Kernel Installer"
-ui_print " "
-
-# Extract kernel image
-ui_print "Extracting kernel..."
-TMPDIR=/tmp/anykernel_$$
-mkdir -p "$TMPDIR"
-cd "$TMPDIR"
-unzip -o "$ZIPFILE" "Image" || {
-    ui_print "Error: Failed to extract Image from zip"
-    exit 1
-}
-
-if [ ! -f "$TMPDIR/Image" ]; then
-    ui_print "Error: Image not found in zip"
-    exit 1
-fi
-
-# Try to use magiskboot if available (most reliable method)
-if command -v magiskboot &> /dev/null; then
-    ui_print "Using magiskboot to repack boot image..."
-    
-    # Find boot partition
-    BOOT_PARTITION=$(find /dev/block -name boot 2>/dev/null | head -n 1)
-    if [ -z "$BOOT_PARTITION" ]; then
-        for name in boot /dev/block/bootdevice/by-name/boot /dev/block/by-name/boot; do
-            if [ -e "$name" ]; then
-                BOOT_PARTITION="$name"
-                break
-            fi
-        done
-    fi
-    
-    if [ -z "$BOOT_PARTITION" ] || [ ! -e "$BOOT_PARTITION" ]; then
-        ui_print "Error: Boot partition not found"
-        exit 1
-    fi
-    
-    ui_print "Backing up boot partition..."
-    dd if="$BOOT_PARTITION" of="$TMPDIR/boot.img" bs=4096 || {
-        ui_print "Error: Failed to read boot partition"
-        exit 1
-    }
-    
-    ui_print "Unpacking boot image..."
-    magiskboot unpack "$TMPDIR/boot.img" || {
-        ui_print "Error: Failed to unpack boot image"
-        exit 1
-    }
-    
-    ui_print "Replacing kernel..."
-    cp "$TMPDIR/Image" "$TMPDIR/kernel" || {
-        ui_print "Error: Failed to copy kernel"
-        exit 1
-    }
-    
-    ui_print "Repacking boot image..."
-    magiskboot repack "$TMPDIR/boot.img" "$TMPDIR/boot_new.img" || {
-        ui_print "Error: Failed to repack boot image"
-        exit 1
-    }
-    
-    ui_print "Flashing new boot image..."
-    dd if="$TMPDIR/boot_new.img" of="$BOOT_PARTITION" bs=4096 || {
-        ui_print "Error: Failed to write boot partition"
-        exit 1
-    }
-    
-    ui_print " "
-    ui_print "Kernel flashed successfully!"
-    rm -rf "$TMPDIR"
-    exit 0
-fi
-
-# Fallback: Try to use AIK (Android Image Kitchen) if available
-if [ -d "/tmp/AIK" ] || [ -d "/data/local/tmp/AIK" ]; then
-    AIK_DIR="/tmp/AIK"
-    [ -d "/data/local/tmp/AIK" ] && AIK_DIR="/data/local/tmp/AIK"
-    
-    ui_print "Using Android Image Kitchen..."
-    # AIK method would go here
-    ui_print "AIK method not fully implemented"
-fi
-
-# Final fallback: Direct flash (risky, device-specific)
-ui_print "Warning: Using direct flash method (may not work on all devices)"
-ui_print "This method is device-specific and may cause bootloop!"
-
-BOOT_PARTITION=$(find /dev/block -name boot 2>/dev/null | head -n 1)
-if [ -z "$BOOT_PARTITION" ]; then
-    BOOT_PARTITION="/dev/block/bootdevice/by-name/boot"
-fi
-
-if [ ! -e "$BOOT_PARTITION" ]; then
-    ui_print "Error: Boot partition not found"
-    ui_print "Please use magiskboot or AIK method"
-    exit 1
-fi
-
-ui_print "Direct flashing kernel (offset may vary by device)..."
-# This is device-specific and may need adjustment
-dd if="$TMPDIR/Image" of="$BOOT_PARTITION" bs=4096 seek=2048 conv=notrunc || {
-    ui_print "Error: Direct flash failed"
-    ui_print "Please use a recovery with magiskboot support"
-    exit 1
-}
-
-ui_print " "
-ui_print "Kernel flashed (direct method)"
-ui_print "If device doesn't boot, restore from backup!"
-
-rm -rf "$TMPDIR"
-EOF
-
-chmod +x "$ANYKERNEL_DIR/META-INF/com/google/android/update-binary"
-
-# Copy kernel image to anykernel directory
-cp "$IMAGE_PATH" "$ANYKERNEL_DIR/Image"
-
-# Create anykernel.zip
-cd "$ANYKERNEL_DIR"
-zip -r "$OUT_DIR/anykernel.zip" . > /dev/null
-cd "$SCRIPT_DIR"
-rm -rf "$ANYKERNEL_DIR"
-
-log "✓ anykernel.zip created: $OUT_DIR/anykernel.zip"
 
 # Summary
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Build Artifacts Generated:${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo -e "  ${CYAN}Image.gz:${NC}      $OUT_DIR/Image.gz"
-echo -e "  ${CYAN}boot.img:${NC}      $BOOT_IMG"
-echo -e "  ${CYAN}anykernel.zip:${NC} $OUT_DIR/anykernel.zip"
+if [ "$PACK_IMG" = true ]; then
+    echo -e "  ${CYAN}Image.gz:${NC}      $OUT_DIR/Image.gz"
+    echo -e "  ${CYAN}boot.img:${NC}      $OUT_DIR/boot.img"
+fi
+if [ "$PACK_AK3" = true ]; then
+    echo -e "  ${CYAN}anykernel.zip:${NC} $OUT_DIR/anykernel.zip"
+fi
 echo -e "${GREEN}========================================${NC}"
