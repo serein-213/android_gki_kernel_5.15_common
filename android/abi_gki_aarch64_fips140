@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   module_layout
   __put_task_struct
 
@@ -85,7 +84,6 @@
   get_random_bytes
   __init_swait_queue_head
   irq_stat
-  kasan_flag_enabled
   kernel_neon_begin
   kernel_neon_end
   kfree

@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# required by igb.ko
   dev_trans_start
   eth_get_headlen
   flow_rule_match_eth_addrs

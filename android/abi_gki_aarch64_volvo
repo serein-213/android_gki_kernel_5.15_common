@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# required by CSD
   serdev_device_write
   schedule_hrtimeout_range
   __serdev_device_driver_register

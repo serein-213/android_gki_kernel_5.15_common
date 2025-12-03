@@ -120,6 +120,7 @@
   __cpuhp_state_add_instance
   __cpuhp_state_remove_instance
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpumask_next
   cpumask_next_and
@@ -420,7 +421,6 @@
   jiffies
   jiffies_to_msecs
   jiffies_to_usecs
-  kasan_flag_enabled
   kernel_cpustat
   kernel_param_lock
   kernel_param_unlock

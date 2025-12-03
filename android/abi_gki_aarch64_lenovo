@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   alloc_chrdev_region
   __alloc_pages
   __alloc_skb
@@ -50,6 +49,7 @@
   __cpuhp_state_add_instance
   __cpuhp_state_remove_instance
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpumask_next
   cpu_number
@@ -152,7 +152,6 @@
   is_vmalloc_addr
   jiffies
   jiffies_to_msecs
-  kasan_flag_enabled
   kfree
   kfree_skb
   kimage_voffset

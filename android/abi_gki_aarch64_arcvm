@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   alloc_anon_inode
   alloc_etherdev_mqs
   __alloc_pages
@@ -27,6 +26,7 @@
   __cpuhp_state_add_instance
   __cpuhp_state_remove_instance
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpumask_next
   cpu_number
@@ -81,7 +81,6 @@
   iput
   is_vmalloc_addr
   jiffies
-  kasan_flag_enabled
   kern_mount
   kern_unmount
   kfree

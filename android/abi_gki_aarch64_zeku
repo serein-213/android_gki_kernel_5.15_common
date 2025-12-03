@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   access_process_vm
   add_uevent_var
   alloc_chrdev_region
@@ -53,6 +52,7 @@
   __cpuhp_remove_state
   __cpuhp_setup_state
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpumask_next
   cpu_number
@@ -199,7 +199,6 @@
   is_vmalloc_addr
   jiffies
   jiffies_to_msecs
-  kasan_flag_enabled
   kasprintf
   kernel_kobj
   kfree

@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
 
 # required by touch module
   power_supply_is_system_supplied

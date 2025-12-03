@@ -166,6 +166,7 @@
   __cpuhp_state_remove_instance
   cpuhp_tasks_frozen
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpuidle_get_cpu_driver
   cpuidle_governor_latency_req
@@ -621,7 +622,6 @@
   jiffies
   jiffies_to_msecs
   jiffies_to_usecs
-  kasan_flag_enabled
   kasprintf
   kernel_kobj
   kern_mount

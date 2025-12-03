@@ -1,4 +1,3 @@
-
 [abi_symbol_list]
   access_process_vm
   ack_all_badblocks
@@ -292,6 +291,7 @@
   __cpuhp_state_add_instance
   __cpuhp_state_remove_instance
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpuidle_governor_latency_req
   cpuidle_register_governor
@@ -1140,7 +1140,6 @@
   jiffies
   jiffies_to_msecs
   jiffies_to_usecs
-  kasan_flag_enabled
   kasprintf
   kernel_bind
   kernel_connect

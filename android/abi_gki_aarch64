@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   arm64_const_caps_ready
   __cpuhp_remove_state
   __cpuhp_setup_state
@@ -144,4 +143,4 @@
 
 # preserved by --additions-only
   android_kmalloc_64_create
-task_is_booster
+  task_is_booster

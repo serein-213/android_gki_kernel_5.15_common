@@ -226,7 +226,54 @@ fi
 
 # ==============================================================================
 
+# ==============================================================================
+# CCACHE CONFIGURATION
+# ==============================================================================
+log "Configuring ccache..."
+
+# Set ccache directory (use workspace-relative path for portability)
+CCACHE_DIR="${WORKSPACE_DIR}/.ccache"
+mkdir -p "$CCACHE_DIR"
+
+# Configure ccache environment variables
+export CCACHE_DIR
+# Maximum cache size (default 10GB)
+if [ -z "$CCACHE_MAXSIZE" ]; then
+    export CCACHE_MAXSIZE="10G"
+else
+    export CCACHE_MAXSIZE
+fi
+export CCACHE_COMPRESS=1                        # Enable compression
+export CCACHE_COMPRESSLEVEL=6                   # Compression level (1-9)
+export CCACHE_SLOPPINESS="pch_defines,time_macros,include_file_mtime,include_file_ctime"
+# CCACHE_NOSTATS: 0 means enable stats, 1 means disable stats
+# We want stats enabled, so we don't set this variable (or set it to empty)
+unset CCACHE_NOSTATS
+
+# Show ccache status
+if command -v ccache &> /dev/null; then
+    log "ccache version: $(ccache --version | head -n 1)"
+    log "ccache directory: $CCACHE_DIR"
+    log "ccache max size: $CCACHE_MAXSIZE"
+    
+    # Show current cache statistics
+    if [ -d "$CCACHE_DIR" ] && [ "$(ls -A $CCACHE_DIR 2>/dev/null)" ]; then
+        CACHE_STATS=$(ccache -s 2>/dev/null | grep -E "cache hit|cache miss|cache size|files in cache" || echo "No cache data")
+        if [ -n "$CACHE_STATS" ]; then
+            log "ccache status:"
+            echo "$CACHE_STATS" | sed 's/^/  /'
+        fi
+    else
+        log "ccache cache is empty (first build - will populate during build)"
+    fi
+else
+    warn "ccache not found! Install with: sudo pacman -S ccache"
+    warn "Continuing without ccache (build will be slower)"
+fi
+
+# ==============================================================================
 # 10. Build
+# ==============================================================================
 log "Starting Bazel Build..."
 
 # Start temperature monitoring
@@ -236,7 +283,42 @@ start_temp_monitor
 INITIAL_TEMP=$(get_cpu_temp)
 log "Initial CPU temperature: ${INITIAL_TEMP}°C"
 
-tools/bazel build //common:kernel_aarch64_dist
+# Note: ccache is configured via build.config.common
+# For Bazel builds, we also pass environment variables via --action_env
+# This ensures ccache settings are available to all build actions
+BAZEL_CCACHE_FLAGS=""
+if command -v ccache &> /dev/null; then
+    BAZEL_CCACHE_FLAGS="--action_env=CCACHE_DIR --action_env=CCACHE_MAXSIZE --action_env=CCACHE_COMPRESS --action_env=CCACHE_COMPRESSLEVEL --action_env=CCACHE_SLOPPINESS"
+    log "ccache environment variables will be passed to Bazel build actions"
+fi
+
+# Set build timestamp for kernel version string
+# This fixes the "Thu Jan 1 00:00:00 UTC 1970" issue
+# SOURCE_DATE_EPOCH is used for reproducible builds, but we want actual build time
+BUILD_TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S %Z")
+KBUILD_BUILD_TIMESTAMP="$BUILD_TIMESTAMP"
+export KBUILD_BUILD_TIMESTAMP
+# Also set SOURCE_DATE_EPOCH to current time (not 0) for proper timestamp
+export SOURCE_DATE_EPOCH=$(date +%s)
+
+# Pass timestamp to Bazel build actions
+BAZEL_TIMESTAMP_FLAGS="--action_env=KBUILD_BUILD_TIMESTAMP --action_env=SOURCE_DATE_EPOCH"
+
+log "Build timestamp: $BUILD_TIMESTAMP"
+
+tools/bazel build $BAZEL_CCACHE_FLAGS $BAZEL_TIMESTAMP_FLAGS //common:kernel_aarch64_dist
+
+# Show ccache statistics after build
+if command -v ccache &> /dev/null && [ -d "$CCACHE_DIR" ]; then
+    log "ccache statistics after build:"
+    ccache -s 2>/dev/null | grep -E "cache hit|cache miss|cache size|files in cache" | sed 's/^/  /' || true
+    
+    # Show cache efficiency
+    HIT_RATE=$(ccache -s 2>/dev/null | grep -oP 'hit rate\s+\K[0-9.]+%' || echo "N/A")
+    if [ "$HIT_RATE" != "N/A" ]; then
+        log "ccache hit rate: $HIT_RATE"
+    fi
+fi
 
 # Stop temperature monitoring and show summary
 stop_temp_monitor

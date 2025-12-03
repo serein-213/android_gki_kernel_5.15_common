@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   access_process_vm
   activate_task
   add_cpu
@@ -130,6 +129,7 @@
   cpu_hotplug_disable
   cpu_hotplug_enable
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpu_latency_qos_add_request
   cpu_latency_qos_remove_request
@@ -542,7 +542,6 @@
   is_vmalloc_addr
   jiffies
   jiffies_to_msecs
-  kasan_flag_enabled
   kasprintf
   kernel_kobj
   kernel_neon_begin

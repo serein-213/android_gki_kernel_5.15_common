@@ -63,6 +63,7 @@
   __cpuhp_state_add_instance
   __cpuhp_state_remove_instance
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpumask_next
   __cpu_online_mask
   __cpu_possible_mask
@@ -168,7 +169,6 @@
   jiffies_64
   jiffies
   jiffies_to_msecs
-  kasan_flag_enabled
   kasprintf
   kern_mount
   kern_unmount

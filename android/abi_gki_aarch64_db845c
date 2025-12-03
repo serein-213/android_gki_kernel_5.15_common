@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   add_uevent_var
   alloc_io_pgtable_ops
   __alloc_skb
@@ -62,6 +61,7 @@
   __cpuhp_remove_state
   __cpuhp_setup_state
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpumask_next
   cpu_number
@@ -344,7 +344,6 @@
   jiffies
   jiffies_to_msecs
   jiffies_to_usecs
-  kasan_flag_enabled
   kasprintf
   kernel_connect
   kernel_getsockname

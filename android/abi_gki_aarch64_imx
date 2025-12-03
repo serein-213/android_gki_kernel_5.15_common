@@ -1,5 +1,4 @@
 [abi_symbol_list]
-# commonly used symbols
   add_wait_queue
   alloc_chrdev_region
   alloc_etherdev_mqs
@@ -90,6 +89,7 @@
   __cpuhp_state_add_instance
   __cpuhp_state_remove_instance
   cpu_hwcap_keys
+  kasan_flag_enabled
   cpu_hwcaps
   cpu_latency_qos_add_request
   cpu_latency_qos_remove_request
@@ -514,7 +514,6 @@
   jiffies
   jiffies_to_msecs
   jiffies_to_usecs
-  kasan_flag_enabled
   kasprintf
   __kfifo_alloc
   __kfifo_free

@@ -8,6 +8,36 @@ CLANG_PREBUILT_BIN=prebuilts/clang/host/linux-x86/clang-${CLANG_VERSION}/bin
 BUILDTOOLS_PREBUILT_BIN=build/kernel/build-tools/path/linux-x86
 DTC=${ROOT_DIR}/${BUILDTOOLS_PREBUILT_BIN}/dtc
 
+# CCACHE Configuration
+# Enable ccache if available and not explicitly disabled
+if [ -z "${DISABLE_CCACHE}" ] && command -v ccache >/dev/null 2>&1; then
+    # Set ccache directory (relative to workspace root)
+    export CCACHE_DIR="${ROOT_DIR}/.ccache"
+    mkdir -p "${CCACHE_DIR}"
+    
+    # Configure ccache settings
+    if [ -z "$CCACHE_MAXSIZE" ]; then
+        export CCACHE_MAXSIZE="10G"
+    else
+        export CCACHE_MAXSIZE
+    fi
+    export CCACHE_COMPRESS=1
+    export CCACHE_COMPRESSLEVEL=6
+    export CCACHE_SLOPPINESS="pch_defines,time_macros,include_file_mtime,include_file_ctime"
+    # CCACHE_NOSTATS: Don't set it (stats enabled by default)
+    unset CCACHE_NOSTATS
+    
+    # Wrap Clang with ccache
+    # Bazel/Kleaf will use these if set
+    CLANG_PATH="${ROOT_DIR}/${CLANG_PREBUILT_BIN}/clang"
+    CLANGXX_PATH="${ROOT_DIR}/${CLANG_PREBUILT_BIN}/clang++"
+    
+    if [ -f "${CLANG_PATH}" ]; then
+        export CC="ccache ${CLANG_PATH}"
+        export CXX="ccache ${CLANGXX_PATH}"
+    fi
+fi
+
 KCFLAGS="${KCFLAGS} -D__ANDROID_COMMON_KERNEL__"
 EXTRA_CMDS=''
 STOP_SHIP_TRACEPRINTK=1
