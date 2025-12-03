@@ -87,11 +87,6 @@ obj-$(CONFIG_SLAB) += slab.o
 obj-$(CONFIG_SLUB) += slub.o
 obj-$(CONFIG_KASAN)	+= kasan/
 obj-$(CONFIG_KFENCE) += kfence/
-# Provide stub symbols for vendor modules even when KASAN is disabled
-# This ensures kasan_flag_enabled is available for modules that depend on it
-ifeq ($(CONFIG_KASAN),)
-obj-y += kasan_stub.o
-endif
 obj-$(CONFIG_FAILSLAB) += failslab.o
 obj-$(CONFIG_MEMTEST)		+= memtest.o
 obj-$(CONFIG_MIGRATION) += migrate.o
