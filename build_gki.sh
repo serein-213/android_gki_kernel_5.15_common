@@ -274,8 +274,22 @@ pack_anykernel() {
 #!/sbin/sh
 # AnyKernel installer script for GKI kernel
 
-OUTFD=$2
-ZIPFILE=$3
+# Handle different parameter formats:
+# Standard AnyKernel3: $1=OUTFD, $2=ZIPFILE
+# HorizonKernelFlasher: $1=3, $2=1, $3=ZIPFILE
+if [ -n "$3" ] && [ -f "$3" ]; then
+    # HorizonKernelFlasher format: sh update-binary 3 1 "zip路径"
+    OUTFD=$1
+    ZIPFILE=$3
+elif [ -n "$2" ] && [ -f "$2" ]; then
+    # Standard AnyKernel3 format: sh update-binary OUTFD ZIPFILE
+    OUTFD=$1
+    ZIPFILE=$2
+else
+    # Fallback: try to use what we have
+    OUTFD=${1:-3}
+    ZIPFILE=${2:-$3}
+fi
 
 ui_print() {
     echo "ui_print $1" >&$OUTFD
@@ -304,15 +318,32 @@ fi
 # Enhanced boot partition detection (boot partition only)
 find_boot_partition() {
     local boot_part=""
+    local slot_suffix=""
     
-    # Method 1: Check common by-name paths
+    # Helper function to check if path exists (works with symlinks and block devices)
+    check_path() {
+        local p="$1"
+        # Try multiple methods to check if path exists
+        if [ -e "$p" ] || [ -L "$p" ] || [ -b "$p" ] || [ -c "$p" ]; then
+            return 0
+        fi
+        # Also try using ls (more reliable in some recovery environments)
+        if ls "$p" >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
+    }
+    
+    # Method 1: Direct check for A/B partitions (boot_a and boot_b) - most reliable
+    # Check boot_a first (slot a) - try multiple paths
     for path in \
-        "/dev/block/bootdevice/by-name/boot" \
-        "/dev/block/by-name/boot" \
-        "/dev/block/platform/*/by-name/boot" \
-        "/dev/block/platform/*/*/by-name/boot"; do
+        "/dev/block/by-name/boot_a" \
+        "/dev/block/bootdevice/by-name/boot_a" \
+        "/dev/block/platform/*/by-name/boot_a" \
+        "/dev/block/platform/*/*/by-name/boot_a"; do
+        # Expand wildcards
         for p in $path; do
-            if [ -e "$p" ]; then
+            if check_path "$p"; then
                 boot_part="$p"
                 ui_print "Found boot partition: $boot_part"
                 echo "$boot_part"
@@ -321,45 +352,103 @@ find_boot_partition() {
         done
     done
     
-    # Method 2: Use find to search /dev/block
+    # Check boot_b (slot b) - try multiple paths
+    for path in \
+        "/dev/block/by-name/boot_b" \
+        "/dev/block/bootdevice/by-name/boot_b" \
+        "/dev/block/platform/*/by-name/boot_b" \
+        "/dev/block/platform/*/*/by-name/boot_b"; do
+        # Expand wildcards
+        for p in $path; do
+            if check_path "$p"; then
+                boot_part="$p"
+                ui_print "Found boot partition: $boot_part"
+                echo "$boot_part"
+                return 0
+            fi
+        done
+    done
+    
+    # Method 2: Use find to search for boot_a or boot_b (A/B partitions)
     if [ -d "/dev/block" ]; then
-        boot_part=$(find /dev/block -name "boot" 2>/dev/null | head -n 1)
-        if [ -n "$boot_part" ] && [ -e "$boot_part" ]; then
+        # Try boot_a first
+        boot_part=$(find /dev/block -name "boot_a" 2>/dev/null | head -n 1)
+        if [ -n "$boot_part" ] && check_path "$boot_part"; then
+            ui_print "Found boot partition via find: $boot_part"
+            echo "$boot_part"
+            return 0
+        fi
+        # Try boot_b
+        boot_part=$(find /dev/block -name "boot_b" 2>/dev/null | head -n 1)
+        if [ -n "$boot_part" ] && check_path "$boot_part"; then
+            ui_print "Found boot partition via find: $boot_part"
+            echo "$boot_part"
+            return 0
+        fi
+    fi
+    
+    # Method 3: Check common by-name paths (non-A/B devices)
+    for path in \
+        "/dev/block/bootdevice/by-name/boot" \
+        "/dev/block/by-name/boot"; do
+        if check_path "$path"; then
+            boot_part="$path"
             ui_print "Found boot partition: $boot_part"
             echo "$boot_part"
             return 0
         fi
-    fi
+    done
     
-    # Method 3: Try to get from lsblk
-    if command -v lsblk &> /dev/null; then
-        boot_part=$(lsblk -n -o NAME,PATH | grep -iE "^boot" | head -n 1 | awk '{print "/dev/block/"$1}')
-        if [ -n "$boot_part" ] && [ -e "$boot_part" ]; then
-            ui_print "Found boot partition via lsblk: $boot_part"
+    # Method 4: Use find to search for boot (non-A/B)
+    if [ -d "/dev/block" ]; then
+        boot_part=$(find /dev/block -name "boot" 2>/dev/null | head -n 1)
+        if [ -n "$boot_part" ] && check_path "$boot_part"; then
+            ui_print "Found boot partition via find: $boot_part"
             echo "$boot_part"
             return 0
         fi
     fi
     
-    # Method 4: Try getprop (Android system property)
+    # Method 5: Try getprop (Android system property) - may not work in all recovery environments
     if command -v getprop &> /dev/null; then
-        local slot_suffix=$(getprop ro.boot.slot_suffix 2>/dev/null || echo "")
+        slot_suffix=$(getprop ro.boot.slot_suffix 2>/dev/null || echo "")
         local boot_dev=$(getprop ro.boot.bootdevice 2>/dev/null || echo "")
+        
         if [ -n "$boot_dev" ]; then
-            boot_part="/dev/block/platform/$boot_dev/by-name/boot${slot_suffix}"
-            if [ -e "$boot_part" ]; then
-                ui_print "Found boot partition via getprop: $boot_part"
-                echo "$boot_part"
-                return 0
+            # Try with slot suffix first
+            if [ -n "$slot_suffix" ]; then
+                boot_part="/dev/block/platform/$boot_dev/by-name/boot${slot_suffix}"
+                if check_path "$boot_part"; then
+                    ui_print "Found boot partition via getprop: $boot_part"
+                    echo "$boot_part"
+                    return 0
+                fi
             fi
             # Try without slot suffix
             boot_part="/dev/block/platform/$boot_dev/by-name/boot"
-            if [ -e "$boot_part" ]; then
+            if check_path "$boot_part"; then
                 ui_print "Found boot partition via getprop: $boot_part"
                 echo "$boot_part"
                 return 0
             fi
         fi
+    fi
+    
+    # Method 6: Try platform paths with wildcard expansion
+    if [ -d "/dev/block/platform" ]; then
+        for plat_dir in /dev/block/platform/*/by-name; do
+            if [ -d "$plat_dir" ]; then
+                # Check boot_a and boot_b first
+                for name in boot_a boot_b boot; do
+                    if check_path "$plat_dir/$name"; then
+                        boot_part="$plat_dir/$name"
+                        ui_print "Found boot partition: $boot_part"
+                        echo "$boot_part"
+                        return 0
+                    fi
+                done
+            fi
+        done
     fi
     
     return 1
@@ -369,12 +458,36 @@ find_boot_partition() {
 if command -v magiskboot &> /dev/null; then
     ui_print "Using magiskboot to repack boot image..."
     
+    # Debug: List available boot partitions BEFORE searching
+    ui_print "Debug: Checking available boot partitions..."
+    if [ -d "/dev/block/by-name" ]; then
+        for p in /dev/block/by-name/boot*; do
+            if [ -e "$p" ] || [ -L "$p" ] || [ -b "$p" ]; then
+                ui_print "  Found: $p"
+            fi
+        done
+    fi
+    if [ -d "/dev/block/bootdevice/by-name" ]; then
+        for p in /dev/block/bootdevice/by-name/boot*; do
+            if [ -e "$p" ] || [ -L "$p" ] || [ -b "$p" ]; then
+                ui_print "  Found: $p"
+            fi
+        done
+    fi
+    
     # Find boot partition using enhanced detection
     BOOT_PARTITION=$(find_boot_partition)
     
-    if [ -z "$BOOT_PARTITION" ] || [ ! -e "$BOOT_PARTITION" ]; then
+    if [ -z "$BOOT_PARTITION" ]; then
         ui_print "Error: Boot partition not found"
         ui_print "Tried multiple detection methods"
+        ui_print "Please check your device's partition layout"
+        exit 1
+    fi
+    
+    # Verify the partition exists (try multiple methods)
+    if [ ! -e "$BOOT_PARTITION" ] && [ ! -L "$BOOT_PARTITION" ] && [ ! -b "$BOOT_PARTITION" ]; then
+        ui_print "Error: Boot partition not accessible: $BOOT_PARTITION"
         ui_print "Please check your device's partition layout"
         exit 1
     fi
