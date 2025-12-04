@@ -41,7 +41,14 @@ jobs:
           flex bison libssl-dev libelf-dev
         
         # Install mkbootimg
-        sudo pip3 install mkbootimg
+        # Install mkbootimg from AOSP tools
+sudo apt-get install -y python3-venv  # if needed
+
+git clone https://android.googlesource.com/platform/system/tools/mkbootimg
+cd mkbootimg
+# If there is a setup or direct script:
+sudo install -m 0755 mkbootimg.py /usr/local/bin/mkbootimg
+cd ..
         
         # Install Repo tool with checksum verification
         mkdir -p ~/.bin
