@@ -73,7 +73,7 @@ jobs:
         
         # Initialize repo with depth 1 to save time and space
         repo init -u https://android.googlesource.com/kernel/manifest \
-  -b android13-5.15-2025-12
+          -b android13-5.15-2025-12
         
         # Create local manifest to remove default kernel/common
         mkdir -p .repo/local_manifests
