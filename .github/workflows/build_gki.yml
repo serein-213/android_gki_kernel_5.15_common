@@ -72,7 +72,7 @@ jobs:
         git config --global user.email "action@github.com"
         
         # Initialize repo with depth 1 to save time and space
-        repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15 --depth=1
+        repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15
         
         # Create local manifest to remove default kernel/common
         mkdir -p .repo/local_manifests
@@ -167,6 +167,18 @@ jobs:
         
         echo "Build information:"
         cat build_info.txt
+
+
+    - name: Check Clang prebuilts
+  run: |
+    cd gki_build_workspace
+    echo "Checking for Clang prebuilts..."
+    ls -R prebuilts/clang/host || true
+    if [ ! -d prebuilts/clang/host/linux-x86/clang-r547379 ]; then
+      echo "ERROR: prebuilts/clang/host/linux-x86/clang-r547379 is missing after repo sync"
+      exit 1
+    fi        
+
 
     - name: Build Kernel
       run: |
