@@ -4,8 +4,8 @@
 # ==============================================================================
 
 # Source common functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/common.sh"
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MODULE_DIR/common.sh"
 
 # Temperature monitoring configuration
 TEMP_SENSOR="k10temp-pci-00c3"       # AMD CPU temperature sensor

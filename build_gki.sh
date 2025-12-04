@@ -132,7 +132,7 @@ if [ "$SKIP_BUILD" = false ]; then
     stop_temp_monitor
     
     # Restore .config file if it was moved
-    SOURCE_DIR="$(realpath ../android_gki_kernel_5.15_common)"
+    SOURCE_DIR="$REPO_ROOT"
     CONFIG_BACKUP="$SOURCE_DIR/.config.build_backup"
     if [ -f "$CONFIG_BACKUP" ]; then
         log "Restoring .config file..."

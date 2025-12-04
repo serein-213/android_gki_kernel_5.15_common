@@ -17,7 +17,13 @@ warn() { echo -e "${YELLOW}[WARN] $1${NC}"; }
 error() { echo -e "${RED}[ERROR] $1${NC}"; }
 
 # Workspace configuration
-WORKSPACE_DIR="../gki_build_workspace"
+# Calculate absolute paths to avoid issues with where the script is run from
+LIB_DIR_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$LIB_DIR_ABS")"
+WORKSPACE_DIR="$REPO_ROOT/../gki_build_workspace"
+# Ensure WORKSPACE_DIR is absolute
+WORKSPACE_DIR="$(realpath -m "$WORKSPACE_DIR")"
+
 KERNEL_SRC="$WORKSPACE_DIR/common"
 CLANG_DIR="$WORKSPACE_DIR/prebuilts/clang/host/linux-x86"
 CLANG_VER="clang-r547379"

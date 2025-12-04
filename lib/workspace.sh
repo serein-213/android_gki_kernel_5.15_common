@@ -4,8 +4,8 @@
 # ==============================================================================
 
 # Source common functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/common.sh"
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MODULE_DIR/common.sh"
 
 # Setup workspace
 setup_workspace() {
@@ -32,12 +32,12 @@ EOF
     log "Linking Kernel Source..."
     if [ -L "common" ]; then rm "common"; fi
     if [ -d "common" ]; then mv common "common_backup_$(date +%s)"; fi
-    ln -s "$(realpath ../android_gki_kernel_5.15_common)" common
+    ln -s "$REPO_ROOT" common
     
     # Remove .config from source tree to avoid "source tree is not clean" error
     # The Makefile's outputmakefile target checks if .config exists in srctree during out-of-tree builds
     # Bazel will generate .config from gki_defconfig automatically, so we can safely remove it
-    SOURCE_DIR="$(realpath ../android_gki_kernel_5.15_common)"
+    SOURCE_DIR="$REPO_ROOT"
     if [ -f "$SOURCE_DIR/.config" ]; then
         log "Removing .config from source tree (Bazel will regenerate from defconfig)..."
         rm -f "$SOURCE_DIR/.config" "$SOURCE_DIR/.config.old"

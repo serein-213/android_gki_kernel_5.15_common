@@ -4,8 +4,8 @@
 # ==============================================================================
 
 # Source common functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/common.sh"
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MODULE_DIR/common.sh"
 
 # Apply all configuration fixes
 apply_config_fixes() {
@@ -48,6 +48,13 @@ apply_config_fixes() {
     if ! grep -q "task_is_booster" "$SYMBOL_LIST"; then
         log "Updating KMI Symbol List..."
         echo "task_is_booster" >> "$SYMBOL_LIST"
+    fi
+
+    # Fix: Patch stamp.bzl to remove -maybe-dirty suffix
+    # This ensures the kernel version string is clean
+    if [ -f "$STAMP_BZL" ]; then
+        log "Patching stamp.bzl to remove -maybe-dirty suffix..."
+        sed -i 's/export LOCALVERSION="-maybe-dirty"/export LOCALVERSION=""/' "$STAMP_BZL"
     fi
     
     log "Configuration fixes applied."
