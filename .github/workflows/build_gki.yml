@@ -36,8 +36,8 @@ jobs:
       run: |
         echo "Installing build dependencies..."
         sudo apt-get update
-        sudo apt-get install -y git zip unzip curl wget python3 bc rsync schedtool 
-          cpio ncurses-dev libxml2-utils inetutils-ping build-essential python3-pip 
+        sudo apt-get install -y git zip unzip curl wget python3 bc rsync schedtool \
+          cpio ncurses-dev libxml2-utils inetutils-ping build-essential python3-pip \
           flex bison libssl-dev libelf-dev python3-venv
 
         # Install mkbootimg from AOSP source
@@ -60,24 +60,22 @@ jobs:
         chmod a+rx ~/.bin/repo
         echo "$HOME/.bin" >> $GITHUB_PATH
 
-
     - name: Setup Build Environment
       run: |
         echo "Setting up GKI build environment..."
         mkdir -p gki_build_workspace
         cd gki_build_workspace
-        
+
         # Configure Git
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
-        
-        # Initialize repo with depth 1 to save time and space
-        # Updated to use the correct manifest and branch based on current environment
-        repo init -u https://android.googlesource.com/kernel/manifest 
-          -b common-android13-5.15
-          --depth=1
+
+        # Initialize repo
+        repo init -u https://android.googlesource.com/kernel/manifest \
+          -b common-android13-5.15 \
+          --depth=1 \
           --no-clone-bundle
-        
+
         # Create local manifest to remove default kernel/common
         mkdir -p .repo/local_manifests
         cat > .repo/local_manifests/local.xml <<EOF
@@ -86,7 +84,7 @@ jobs:
             <remove-project name="kernel/common" />
         </manifest>
         EOF
-        
+
         # Sync only necessary parts
         echo "Syncing build tools and dependencies..."
         repo sync -c -j$(nproc) --no-tags --no-clone-bundle
@@ -94,15 +92,15 @@ jobs:
     - name: Link Kernel Source
       run: |
         cd gki_build_workspace
-        ln -s $GITHUB_WORKSPACE/android_gki_kernel_5.15_common common
+        ln -s "$GITHUB_WORKSPACE/android_gki_kernel_5.15_common" common
 
     - name: Apply Configuration Fixes
       run: |
         cd gki_build_workspace
         KERNEL_SRC="common"
-        
+
         echo "Applying kernel configuration fixes..."
-        
+
         # 1. ZRAM Fix - make ZRAM modular
         GKI_DEFCONFIG="$KERNEL_SRC/arch/arm64/configs/gki_defconfig"
         if grep -q "CONFIG_ZRAM=y" "$GKI_DEFCONFIG"; then
@@ -110,7 +108,7 @@ jobs:
             sed -i 's/CONFIG_ZRAM=y/CONFIG_ZRAM=m/' "$GKI_DEFCONFIG"
             sed -i 's/CONFIG_ZSMALLOC=y/CONFIG_ZSMALLOC=m/' "$GKI_DEFCONFIG"
         fi
-        
+
         # Add ZRAM modules to system DLKM list
         MODULES_LIST="$KERNEL_SRC/android/gki_system_dlkm_modules"
         if ! grep -q "drivers/block/zram/zram.ko" "$MODULES_LIST"; then
@@ -123,8 +121,10 @@ jobs:
         CPUSET_C="$KERNEL_SRC/kernel/cgroup/cpuset.c"
         if ! grep -q "EXPORT_SYMBOL_GPL(task_is_booster)" "$CPUSET_C"; then
             echo "Exporting task_is_booster symbol..."
-            echo "" >> "$CPUSET_C"
-            echo "EXPORT_SYMBOL_GPL(task_is_booster);" >> "$CPUSET_C"
+            {
+              echo ""
+              echo "EXPORT_SYMBOL_GPL(task_is_booster);"
+            } >> "$CPUSET_C"
         fi
 
         # 3. Update KMI Symbol List
@@ -133,7 +133,7 @@ jobs:
             echo "Adding task_is_booster to KMI symbol list..."
             echo "task_is_booster" >> "$SYMBOL_LIST"
         fi
-        
+
         # 4. Patch stamp.bzl to remove -maybe-dirty suffix
         STAMP_BZL="build/kernel/kleaf/impl/stamp.bzl"
         if [ -f "$STAMP_BZL" ]; then
@@ -144,20 +144,16 @@ jobs:
     - name: Configure Build Timestamps
       run: |
         cd gki_build_workspace
-        
-        # Set proper build timestamp for correct kernel version string
-        # This ensures the kernel shows the actual build time instead of epoch
+
         BUILD_TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
         BUILD_TIMESTAMP_UNIX=$(date +%s)
-        
+
         echo "Build timestamp: $BUILD_TIMESTAMP"
         echo "Build timestamp (Unix): $BUILD_TIMESTAMP_UNIX"
-        
-        # Export for Bazel build
-        echo "KBUILD_BUILD_TIMESTAMP=$BUILD_TIMESTAMP" >> $GITHUB_ENV
-        echo "SOURCE_DATE_EPOCH=$BUILD_TIMESTAMP_UNIX" >> $GITHUB_ENV
-        
-        # Also create a version info file for artifacts
+
+        echo "KBUILD_BUILD_TIMESTAMP=$BUILD_TIMESTAMP" >> "$GITHUB_ENV"
+        echo "SOURCE_DATE_EPOCH=$BUILD_TIMESTAMP_UNIX" >> "$GITHUB_ENV"
+
         cat > build_info.txt <<EOF
         Build Date: $BUILD_TIMESTAMP
         Build Unix Timestamp: $BUILD_TIMESTAMP_UNIX
@@ -168,62 +164,58 @@ jobs:
         Commit: ${{ github.sha }}
         Build Type: GKI (Generic Kernel Image)
         EOF
-        
+
         echo "Build information:"
         cat build_info.txt
-
 
     - name: Build Kernel
       run: |
         cd gki_build_workspace
-        
+
         echo "Starting kernel build..."
         echo "Timestamp environment variables:"
         echo "  KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
         echo "  SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
-        
-        # Set up clang path based on current environment
-        export CLANG_PATH=$GITHUB_WORKSPACE/gki_build_workspace/prebuilts/clang/host/linux-x86/clang-r547379/bin
-        export PATH=$CLANG_PATH:$PATH
+
+        # 注意：这里的 clang 路径和版本后面还要根据实际 prebuilts 调整
+        export CLANG_PATH="$PWD/prebuilts/clang/host/linux-x86/clang-r547379/bin"
+        export PATH="$CLANG_PATH:$PATH"
         export CC=clang
         export CLANG_TRIPLE=aarch64-linux-gnu-
-        
-        # Build with Bazel, passing timestamp environment variables
-        tools/bazel build 
-          --action_env=KBUILD_BUILD_TIMESTAMP="$KBUILD_BUILD_TIMESTAMP" 
-          --action_env=SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" 
-          --action_env=CLANG_PATH="$CLANG_PATH"
-          --action_env=CC="$CC"
-          --action_env=CLANG_TRIPLE="$CLANG_TRIPLE"
-          --config=fast 
+
+        tools/bazel build \
+          --action_env=KBUILD_BUILD_TIMESTAMP="$KBUILD_BUILD_TIMESTAMP" \
+          --action_env=SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+          --action_env=CLANG_PATH="$CLANG_PATH" \
+          --action_env=CC="$CC" \
+          --action_env=CLANG_TRIPLE="$CLANG_TRIPLE" \
+          --config=fast \
           //common:kernel_aarch64_dist
-        
+
         echo "Kernel build completed successfully!"
 
     - name: Verify Kernel Image
       run: |
         cd gki_build_workspace
-        
-        # Find the built kernel image
+
         KERNEL_IMAGE=$(find out/ -name "Image" -type f | head -n 1)
-        
+
         if [ -z "$KERNEL_IMAGE" ]; then
             echo "ERROR: Kernel image not found!"
             exit 1
         fi
-        
+
         echo "Found kernel image: $KERNEL_IMAGE"
         ls -lh "$KERNEL_IMAGE"
-        
-        # Check for compressed images
+
         KERNEL_IMAGE_GZ=$(find out/ -name "Image.gz" -type f | head -n 1)
         KERNEL_IMAGE_LZ4=$(find out/ -name "Image.lz4" -type f | head -n 1)
-        
+
         if [ -n "$KERNEL_IMAGE_GZ" ]; then
             echo "Found compressed kernel (gzip): $KERNEL_IMAGE_GZ"
             ls -lh "$KERNEL_IMAGE_GZ"
         fi
-        
+
         if [ -n "$KERNEL_IMAGE_LZ4" ]; then
             echo "Found compressed kernel (lz4): $KERNEL_IMAGE_LZ4"
             ls -lh "$KERNEL_IMAGE_LZ4"
@@ -233,98 +225,80 @@ jobs:
       id: kernel_version
       run: |
         cd gki_build_workspace
-        
-        # Find kernel image
+
         KERNEL_IMAGE=$(find out/ -name "Image" -type f | head -n 1)
-        
-        # Extract version string from kernel image
-        # The version string is typically at offset 0x10 in the kernel image
+
         VERSION_STRING=$(strings "$KERNEL_IMAGE" | grep "Linux version" | head -n 1)
-        
+
         echo "Kernel version string:"
         echo "$VERSION_STRING"
-        
-        # Check if timestamp is correct (not epoch time)
+
         if echo "$VERSION_STRING" | grep -q "1970"; then
             echo "WARNING: Kernel still has epoch timestamp!"
         else
             echo "SUCCESS: Kernel has correct build timestamp!"
         fi
-        
-        # Save version for artifact naming
+
         KERNEL_VERSION=$(echo "$VERSION_STRING" | sed -n 's/.*Linux version \([^ ]*\).*/\1/p')
-        echo "kernel_version=$KERNEL_VERSION" >> $GITHUB_OUTPUT
+        echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Package Kernel Artifacts
       run: |
         cd gki_build_workspace
-        
-        # Create output directory
+
         mkdir -p kernel_output
-        
-        # Find and copy kernel images
+
         KERNEL_IMAGE=$(find out/ -name "Image" -type f | head -n 1)
         KERNEL_IMAGE_GZ=$(find out/ -name "Image.gz" -type f | head -n 1)
         KERNEL_IMAGE_LZ4=$(find out/ -name "Image.lz4" -type f | head -n 1)
-        
+
         if [ -n "$KERNEL_IMAGE" ]; then
             cp "$KERNEL_IMAGE" kernel_output/
         fi
-        
+
         if [ -n "$KERNEL_IMAGE_GZ" ]; then
             cp "$KERNEL_IMAGE_GZ" kernel_output/
         fi
-        
+
         if [ -n "$KERNEL_IMAGE_LZ4" ]; then
             cp "$KERNEL_IMAGE_LZ4" kernel_output/
         fi
-        
-        # Copy modules
+
         echo "Collecting kernel modules..."
         find out/ -name "*.ko" -type f -exec cp {} kernel_output/ \; 2>/dev/null || true
-        
-        # Copy build info
+
         cp build_info.txt kernel_output/
-        
-        # Create boot.img
+
         if [ -n "$KERNEL_IMAGE" ]; then
             echo "Creating boot.img..."
-            mkbootimg 
-              --kernel "$KERNEL_IMAGE" 
-              --header_version 4 
+            mkbootimg \
+              --kernel "$KERNEL_IMAGE" \
+              --header_version 4 \
               --output kernel_output/boot.img
             echo "boot.img created successfully"
         fi
-        
-        # List all artifacts
+
         echo "Build artifacts:"
         ls -lh kernel_output/
 
     - name: Create AnyKernel3 Package
       run: |
         cd gki_build_workspace
-        
-        # Clone AnyKernel3 with pinned version for security
-        # Using a specific release tag instead of HEAD
+
         ANYKERNEL3_VERSION="v3.7.3"
         git clone --depth=1 --branch "$ANYKERNEL3_VERSION" https://github.com/osm0sis/AnyKernel3
         rm -rf AnyKernel3/.git AnyKernel3/.gitignore
-        
-        # Find kernel image
+
         KERNEL_IMAGE=$(find out/ -name "Image" -type f | head -n 1)
-        
+
         if [ -n "$KERNEL_IMAGE" ]; then
-            # Copy kernel to AnyKernel3
             cp "$KERNEL_IMAGE" AnyKernel3/
-            
-            # Update AnyKernel3 properties
             cd AnyKernel3
-            
-            # Create custom anykernel.sh
+
             cat > anykernel.sh << 'AKEOF'
         # AnyKernel3 Ramdisk Mod Script
         # osm0sis @ xda-developers
-        
+
         ## AnyKernel setup
         # begin properties
         properties() {
@@ -342,69 +316,67 @@ jobs:
         supported.versions=13
         supported.patchlevels=
         }
-        
+
         # shell variables
         block=/dev/block/bootdevice/by-name/boot;
         is_slot_device=auto;
         ramdisk_compression=auto;
-        
+
         ## AnyKernel methods (DO NOT CHANGE)
         # import patching functions/variables - see for reference
         . tools/ak3-core.sh;
-        
+
         ## AnyKernel install
         dump_boot;
-        
+
         # begin ramdisk changes
-        
+
         # end ramdisk changes
-        
+
         write_boot;
         ## end install
         AKEOF
-            
-            # Create zip package
+
             zip -r9 ../kernel_output/AnyKernel3-GKI-5.15.zip . -x '.git*' 'README.md' '*placeholder'
             cd ..
-            
             echo "AnyKernel3 package created successfully"
         fi
 
     - name: Generate Release Notes
       run: |
         cd gki_build_workspace
-        
+
         cat > kernel_output/RELEASE_NOTES.md <<EOF
         # GKI Kernel Build
-        
+
         ## Build Information
-        
+
         $(cat build_info.txt)
-        
+
         ## Files Included
-        
+
         - **Image**: Uncompressed kernel image
         - **Image.gz**: Gzip compressed kernel image
         - **Image.lz4**: LZ4 compressed kernel image
         - **boot.img**: Flashable boot image (header version 4)
         - **AnyKernel3-GKI-5.15.zip**: AnyKernel3 flashable zip
         - **\*.ko**: Kernel modules (if any)
-        
+
         ## Installation
-        
+
         ### Method 1: Flash boot.img
-        \`\`\`bash
+        ```bash
         fastboot flash boot boot.img
         fastboot reboot
-        \`\`\`
-        
+        ```
+
         ### Method 2: Use AnyKernel3 (via Recovery)
         1. Boot into recovery (TWRP recommended)
         2. Flash AnyKernel3-GKI-5.15.zip
         3. Reboot
-        
+
         ## Features
-        
+
         - Android 13 GKI (Generic Kernel Image)
         - Linux 5.15.194
         - AArch64 architecture
@@ -412,14 +384,14 @@ jobs:
         - KMI Generation 8
         - ABI compatible with multiple vendors
         - Built with clang-r547379 (LLVM 15)
-        
+
         ## Notes
-        
+
         - This kernel is built with proper timestamp support
         - Build time is correctly reflected in kernel version string
         - Compatible with Android 13 devices
         EOF
-        
+
         echo "Release notes generated"
         cat kernel_output/RELEASE_NOTES.md
 
@@ -434,21 +406,21 @@ jobs:
     - name: Build Summary
       run: |
         cd gki_build_workspace
-        
-        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Build Information" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        cat build_info.txt >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        ls -lh kernel_output/ >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Kernel Version" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+
+        echo "## Build Summary" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "### Build Information" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        cat build_info.txt >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "### Artifacts" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        ls -lh kernel_output/ >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "### Kernel Version" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
         KERNEL_IMAGE=$(find out/ -name "Image" -type f | head -n 1)
-        strings "$KERNEL_IMAGE" | grep "Linux version" | head -n 1 >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        strings "$KERNEL_IMAGE" | grep "Linux version" | head -n 1 >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
