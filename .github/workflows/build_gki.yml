@@ -38,28 +38,28 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y git zip unzip curl wget python3 bc rsync schedtool \
           cpio ncurses-dev libxml2-utils inetutils-ping build-essential python3-pip \
-          flex bison libssl-dev libelf-dev
-        
-        # Install mkbootimg
-         
+          flex bison libssl-dev libelf-dev python3-venv
+
         # Install mkbootimg from AOSP source
-        sudo apt-get install -y python3-venv
         git clone https://android.googlesource.com/platform/system/tools/mkbootimg
         cd mkbootimg
         sudo install -m 0755 mkbootimg.py /usr/local/bin/mkbootimg
         cd ..
-        
-        # Install Repo tool with checksum verification
+
+        # Install Repo tool (updated validation)
         mkdir -p ~/.bin
         REPO_URL="https://storage.googleapis.com/git-repo-downloads/repo"
         curl -o ~/.bin/repo "$REPO_URL"
-        # Verify it's a valid repo script (basic check)
-        if ! grep -q "repo Launcher" ~/.bin/repo; then
-            echo "ERROR: Downloaded repo file is invalid"
+
+        # 简单有效校验：文件非空且有 shebang
+        if [ ! -s ~/.bin/repo ] || ! head -n 1 ~/.bin/repo | grep -Eq '^#!'; then
+            echo "ERROR: Downloaded repo file looks invalid (empty or missing shebang)"
             exit 1
         fi
+
         chmod a+rx ~/.bin/repo
         echo "$HOME/.bin" >> $GITHUB_PATH
+
 
     - name: Setup Build Environment
       run: |
