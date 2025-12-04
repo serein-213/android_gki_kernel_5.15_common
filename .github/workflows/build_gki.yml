@@ -12,11 +12,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: read
       actions: read
-    
+
     steps:
     - name: Checkout Source
       uses: actions/checkout@v4
@@ -36,8 +36,8 @@ jobs:
       run: |
         echo "Installing build dependencies..."
         sudo apt-get update
-        sudo apt-get install -y git zip unzip curl wget python3 bc rsync schedtool \
-          cpio ncurses-dev libxml2-utils inetutils-ping build-essential python3-pip \
+        sudo apt-get install -y git zip unzip curl wget python3 bc rsync schedtool 
+          cpio ncurses-dev libxml2-utils inetutils-ping build-essential python3-pip 
           flex bison libssl-dev libelf-dev python3-venv
 
         # Install mkbootimg from AOSP source
@@ -72,8 +72,11 @@ jobs:
         git config --global user.email "action@github.com"
         
         # Initialize repo with depth 1 to save time and space
-        repo init -u https://android.googlesource.com/kernel/manifest \
-          -b android13-5.15-2025-12
+        # Updated to use the correct manifest and branch based on current environment
+        repo init -u https://android.googlesource.com/kernel/manifest 
+          -b common-android13-5.15
+          --depth=1
+          --no-clone-bundle
         
         # Create local manifest to remove default kernel/common
         mkdir -p .repo/local_manifests
@@ -179,11 +182,20 @@ jobs:
         echo "  KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
         echo "  SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
         
+        # Set up clang path based on current environment
+        export CLANG_PATH=$GITHUB_WORKSPACE/gki_build_workspace/prebuilts/clang/host/linux-x86/clang-r547379/bin
+        export PATH=$CLANG_PATH:$PATH
+        export CC=clang
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        
         # Build with Bazel, passing timestamp environment variables
-        tools/bazel build \
-          --action_env=KBUILD_BUILD_TIMESTAMP="$KBUILD_BUILD_TIMESTAMP" \
-          --action_env=SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-          --config=fast \
+        tools/bazel build 
+          --action_env=KBUILD_BUILD_TIMESTAMP="$KBUILD_BUILD_TIMESTAMP" 
+          --action_env=SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" 
+          --action_env=CLANG_PATH="$CLANG_PATH"
+          --action_env=CC="$CC"
+          --action_env=CLANG_TRIPLE="$CLANG_TRIPLE"
+          --config=fast 
           //common:kernel_aarch64_dist
         
         echo "Kernel build completed successfully!"
@@ -277,9 +289,9 @@ jobs:
         # Create boot.img
         if [ -n "$KERNEL_IMAGE" ]; then
             echo "Creating boot.img..."
-            mkbootimg \
-              --kernel "$KERNEL_IMAGE" \
-              --header_version 4 \
+            mkbootimg 
+              --kernel "$KERNEL_IMAGE" 
+              --header_version 4 
               --output kernel_output/boot.img
             echo "boot.img created successfully"
         fi
@@ -399,6 +411,7 @@ jobs:
         - Correct build timestamp
         - KMI Generation 8
         - ABI compatible with multiple vendors
+        - Built with clang-r547379 (LLVM 15)
         
         ## Notes
         
