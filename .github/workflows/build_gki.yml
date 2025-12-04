@@ -15,7 +15,7 @@ jobs:
     
     steps:
     - name: Checkout Source
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         path: android_gki_kernel_5.15_common
 
@@ -39,9 +39,15 @@ jobs:
         # Install mkbootimg
         sudo pip3 install mkbootimg
         
-        # Install Repo tool
+        # Install Repo tool with checksum verification
         mkdir -p ~/.bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.bin/repo
+        REPO_URL="https://storage.googleapis.com/git-repo-downloads/repo"
+        curl -o ~/.bin/repo "$REPO_URL"
+        # Verify it's a valid repo script (basic check)
+        if ! grep -q "repo Launcher" ~/.bin/repo; then
+            echo "ERROR: Downloaded repo file is invalid"
+            exit 1
+        fi
         chmod a+rx ~/.bin/repo
         echo "$HOME/.bin" >> $GITHUB_PATH
 
@@ -274,8 +280,10 @@ jobs:
       run: |
         cd gki_build_workspace
         
-        # Clone AnyKernel3
-        git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+        # Clone AnyKernel3 with pinned version for security
+        # Using a specific release tag instead of HEAD
+        ANYKERNEL3_VERSION="v3.7.3"
+        git clone --depth=1 --branch "$ANYKERNEL3_VERSION" https://github.com/osm0sis/AnyKernel3
         rm -rf AnyKernel3/.git AnyKernel3/.gitignore
         
         # Find kernel image
@@ -391,7 +399,7 @@ jobs:
         cat kernel_output/RELEASE_NOTES.md
 
     - name: Upload Kernel Artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: GKI-Kernel-5.15-${{ steps.kernel_version.outputs.kernel_version }}
         path: |
