@@ -44,10 +44,11 @@ jobs:
           cpio ncurses-dev libxml2-utils inetutils-ping build-essential python3-pip \
           flex bison libssl-dev libelf-dev python3-venv lm-sensors
 
-        # Install mkbootimg from AOSP source
+        # Install mkbootimg from AOSP source with all dependencies
         git clone https://android.googlesource.com/platform/system/tools/mkbootimg
         cd mkbootimg
-        sudo install -m 0755 mkbootimg.py /usr/local/bin/mkbootimg
+        # Install the entire package including gki module
+        sudo python3 -m pip install .
         cd ..
 
         # Install Repo tool
