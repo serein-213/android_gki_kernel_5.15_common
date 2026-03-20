@@ -21,6 +21,11 @@ jobs:
         path: android_gki_kernel_5.15_common
         submodules: recursive
 
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
     - name: Free Disk Space
       run: |
         echo "Freeing up disk space..."
@@ -83,14 +88,26 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-repo-sync-
 
-    - name: Run Build Script (with KernelSU)
+    - name: Run Build Script (with KernelSU and SUSFS)
       run: |
         cd android_gki_kernel_5.15_common
+
+        # Clone SUSFS Source
+        git clone -b gki-android13-5.15 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
+
+        # Copy SUSFS Source Files
+        cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
+        cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+        cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
+
+        # Apply Kernel Patch
+        patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch
+
         chmod +x build_gki.sh
-        # 运行构建脚本，启用 KernelSU 支持
+        # 运行构建脚本，启用 KernelSU 和 SUSFS 支持
         # 设置 Bazel 资源限制以防止 OOM
         export BAZEL_FLAGS="--local_ram_resources=10240 --local_cpu_resources=4"
-        ./build_gki.sh --ksu
+        ./build_gki.sh --ksu --susfs
 
     - name: Upload Kernel Artifacts
       uses: actions/upload-artifact@v4
