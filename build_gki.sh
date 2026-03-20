@@ -22,6 +22,7 @@ source "$LIB_DIR/workspace.sh"
 source "$LIB_DIR/version.sh"
 source "$LIB_DIR/ccache.sh"
 source "$LIB_DIR/ksu.sh"
+source "$LIB_DIR/susfs.sh"
 source "$LIB_DIR/bazel.sh"
 
 # ==============================================================================
@@ -31,6 +32,7 @@ SKIP_BUILD=false
 PACK_AK3=false
 PACK_IMG=false
 ENABLE_KSU=false
+ENABLE_SUSFS=false
 CLEAN_CACHE=true # Default to cleaning the cache
 PERF_PROFILE="max"  # 默认全速
 show_usage() {
@@ -38,6 +40,7 @@ show_usage() {
     echo ""
     echo "Options:"
     echo "  --ksu          Enable KernelSU support"
+    echo "  --susfs        Enable SUSFS support (automatically enables KernelSU)"
     echo "  --ak3          Only pack anykernel.zip (skip build)"
     echo "  --img          Only pack boot.img and Image.gz (skip build)"
     echo "  --profile      Build performance profile: max (default), balanced, cool"
@@ -55,6 +58,11 @@ show_usage() {
 while [[ $# -gt 0 ]]; do
     case $1 in
         --ksu)
+            ENABLE_KSU=true
+            shift
+            ;;
+        --susfs)
+            ENABLE_SUSFS=true
             ENABLE_KSU=true
             shift
             ;;
@@ -138,6 +146,11 @@ apply_config_fixes
 # KSU setup 可能会修改源码，确保修改的是源码文件而不是生成文件
 if [ "$ENABLE_KSU" = true ]; then
     setup_kernelsu
+fi
+
+# 3.2 Setup SUSFS (if enabled)
+if [ "$ENABLE_SUSFS" = true ]; then
+    setup_susfs
 fi
 
 # 4. Version Customization
