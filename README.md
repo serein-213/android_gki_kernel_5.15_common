@@ -100,6 +100,8 @@
 
 ### 其他特性
 
+- ✅ **KernelSU**: 集成KernelSU支持
+- ✅ **SUFS4KSU**：集成SUSFS支持，一个用于 KernelSU 的附加 root 插件，用于隐藏内核补丁和用户空间模块。
 - ✅ **BPF**: Berkeley Packet Filter 支持
 - ✅ **Cgroups**: 控制组支持（CPU、内存、调度等）
 - ✅ **实时调度**: RT 组调度支持
@@ -316,4 +318,4 @@ GKI 内核严格遵循 **KMI (Kernel Module Interface)** 规范，确保：
 
 ---
 
-**最后更新**: 2024年
+**近期更新日期**: 2026年3月20日
