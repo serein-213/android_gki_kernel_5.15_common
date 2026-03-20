@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours timeout for kernel build
+    timeout-minutes: 180  # 3 hours timeout for kernel build
 
     permissions:
       contents: read
@@ -35,10 +35,10 @@ jobs:
     - name: Setup Swap
       run: |
         echo "Setting up swap space..."
-        sudo fallocate -l 8G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
+        sudo fallocate -l 8G /swapfile2
+        sudo chmod 600 /swapfile2
+        sudo mkswap /swapfile2
+        sudo swapon /swapfile2
         sudo swapon --show
         echo "Swap setup complete"
 
