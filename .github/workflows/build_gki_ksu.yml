@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours timeout for kernel build
+    timeout-minutes: 180  # 3 hours timeout for kernel build
 
     permissions:
       contents: read
