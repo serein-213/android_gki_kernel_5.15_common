@@ -3,6 +3,7 @@ name: Build GKI Kernel
 on:
   push:
     branches:
+      - serein
       - copilot/create-workflow-script-for-kernel
   pull_request:
     branches:
