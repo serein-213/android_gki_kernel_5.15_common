@@ -75,21 +75,19 @@ static int mana_hwc_post_rx_wqe(const struct hwc_wq *hwc_rxq,
 }
 
 static void mana_hwc_handle_resp(struct hw_channel_context *hwc, u32 resp_len,
-				 struct hwc_work_request *rx_req)
+				 struct hwc_work_request *rx_req, u16 msg_id)
 {
 	const struct gdma_resp_hdr *resp_msg = rx_req->buf_va;
 	struct hwc_caller_ctx *ctx;
 	int err;
 
-	if (!test_bit(resp_msg->response.hwc_msg_id,
-		      hwc->inflight_msg_res.map)) {
-		dev_err(hwc->dev, "hwc_rx: invalid msg_id = %u\n",
-			resp_msg->response.hwc_msg_id);
+	if (!test_bit(msg_id, hwc->inflight_msg_res.map)) {
+		dev_err(hwc->dev, "hwc_rx: invalid msg_id = %u\n", msg_id);
 		mana_hwc_post_rx_wqe(hwc->rxq, rx_req);
 		return;
 	}
 
-	ctx = hwc->caller_ctx + resp_msg->response.hwc_msg_id;
+	ctx = hwc->caller_ctx + msg_id;
 	err = mana_hwc_verify_resp_msg(ctx, resp_msg, resp_len);
 	if (err)
 		goto out;
@@ -192,6 +190,7 @@ static void mana_hwc_rx_event_handler(void *ctx, u32 gdma_rxq_id,
 	struct gdma_sge *sge;
 	u64 rq_base_addr;
 	u64 rx_req_idx;
+	u16 msg_id;
 	u8 *wqe;
 
 	if (WARN_ON_ONCE(hwc_rxq->gdma_wq->id != gdma_rxq_id))
@@ -207,16 +206,26 @@ static void mana_hwc_rx_event_handler(void *ctx, u32 gdma_rxq_id,
 	rq_base_addr = hwc_rxq->msg_buf->mem_info.dma_handle;
 	rx_req_idx = (sge->address - rq_base_addr) / hwc->max_req_msg_size;
 
-	rx_req = &hwc_rxq->msg_buf->reqs[rx_req_idx];
-	resp = (struct gdma_resp_hdr *)rx_req->buf_va;
-
-	if (resp->response.hwc_msg_id >= hwc->num_inflight_msg) {
-		dev_err(hwc->dev, "HWC RX: wrong msg_id=%u\n",
-			resp->response.hwc_msg_id);
+	if (rx_req_idx >= hwc_rxq->msg_buf->num_reqs) {
+		dev_err(hwc->dev, "HWC RX: wrong rx_req_idx=%llu, num_reqs=%u\n",
+			rx_req_idx, hwc_rxq->msg_buf->num_reqs);
 		return;
 	}
 
-	mana_hwc_handle_resp(hwc, rx_oob->tx_oob_data_size, rx_req);
+	rx_req = &hwc_rxq->msg_buf->reqs[rx_req_idx];
+	resp = (struct gdma_resp_hdr *)rx_req->buf_va;
+
+	/* Read msg_id once from DMA buffer to prevent TOCTOU:
+	 * DMA memory is shared/unencrypted in CVMs - host can
+	 * modify it between reads.
+	 */
+	msg_id = READ_ONCE(resp->response.hwc_msg_id);
+	if (msg_id >= hwc->num_inflight_msg) {
+		dev_err(hwc->dev, "HWC RX: wrong msg_id=%u\n", msg_id);
+		return;
+	}
+
+	mana_hwc_handle_resp(hwc, rx_oob->tx_oob_data_size, rx_req, msg_id);
 
 	/* Can no longer use 'resp', because the buffer is posted to the HW
 	 * in mana_hwc_handle_resp() above.
@@ -315,9 +324,6 @@ static void mana_hwc_comp_event(void *ctx, struct gdma_queue *q_self)
 
 static void mana_hwc_destroy_cq(struct gdma_context *gc, struct hwc_cq *hwc_cq)
 {
-	if (!hwc_cq)
-		return;
-
 	kfree(hwc_cq->comp_buf);
 
 	if (hwc_cq->gdma_cq)
@@ -452,9 +458,6 @@ static void mana_hwc_dealloc_dma_buf(struct hw_channel_context *hwc,
 static void mana_hwc_destroy_wq(struct hw_channel_context *hwc,
 				struct hwc_wq *hwc_wq)
 {
-	if (!hwc_wq)
-		return;
-
 	mana_hwc_dealloc_dma_buf(hwc, hwc_wq->msg_buf);
 
 	if (hwc_wq->gdma_wq)
@@ -627,6 +630,7 @@ static int mana_hwc_establish_channel(struct gdma_context *gc, u16 *q_depth,
 	*max_req_msg_size = hwc->hwc_init_max_req_msg_size;
 	*max_resp_msg_size = hwc->hwc_init_max_resp_msg_size;
 
+	/* Both were set in mana_hwc_init_event_handler(). */
 	if (WARN_ON(cq->id >= gc->max_num_cqs))
 		return -EPROTO;
 
@@ -642,9 +646,6 @@ static int mana_hwc_establish_channel(struct gdma_context *gc, u16 *q_depth,
 static int mana_hwc_init_queues(struct hw_channel_context *hwc, u16 q_depth,
 				u32 max_req_msg_size, u32 max_resp_msg_size)
 {
-	struct hwc_wq *hwc_rxq = NULL;
-	struct hwc_wq *hwc_txq = NULL;
-	struct hwc_cq *hwc_cq = NULL;
 	int err;
 
 	err = mana_hwc_init_inflight_msg(hwc, q_depth);
@@ -657,44 +658,32 @@ static int mana_hwc_init_queues(struct hw_channel_context *hwc, u16 q_depth,
 	err = mana_hwc_create_cq(hwc, q_depth * 2,
 				 mana_hwc_init_event_handler, hwc,
 				 mana_hwc_rx_event_handler, hwc,
-				 mana_hwc_tx_event_handler, hwc, &hwc_cq);
+				 mana_hwc_tx_event_handler, hwc, &hwc->cq);
 	if (err) {
 		dev_err(hwc->dev, "Failed to create HWC CQ: %d\n", err);
 		goto out;
 	}
-	hwc->cq = hwc_cq;
 
 	err = mana_hwc_create_wq(hwc, GDMA_RQ, q_depth, max_req_msg_size,
-				 hwc_cq, &hwc_rxq);
+				 hwc->cq, &hwc->rxq);
 	if (err) {
 		dev_err(hwc->dev, "Failed to create HWC RQ: %d\n", err);
 		goto out;
 	}
-	hwc->rxq = hwc_rxq;
 
 	err = mana_hwc_create_wq(hwc, GDMA_SQ, q_depth, max_resp_msg_size,
-				 hwc_cq, &hwc_txq);
+				 hwc->cq, &hwc->txq);
 	if (err) {
 		dev_err(hwc->dev, "Failed to create HWC SQ: %d\n", err);
 		goto out;
 	}
-	hwc->txq = hwc_txq;
 
 	hwc->num_inflight_msg = q_depth;
 	hwc->max_req_msg_size = max_req_msg_size;
 
 	return 0;
 out:
-	if (hwc_txq)
-		mana_hwc_destroy_wq(hwc, hwc_txq);
-
-	if (hwc_rxq)
-		mana_hwc_destroy_wq(hwc, hwc_rxq);
-
-	if (hwc_cq)
-		mana_hwc_destroy_cq(hwc->gdma_dev->gdma_context, hwc_cq);
-
-	mana_gd_free_res_map(&hwc->inflight_msg_res);
+	/* mana_hwc_create_channel() will do the cleanup.*/
 	return err;
 }
 
@@ -722,6 +711,9 @@ int mana_hwc_create_channel(struct gdma_context *gc)
 	gd->pdid = INVALID_PDID;
 	gd->doorbell = INVALID_DOORBELL;
 
+	/* mana_hwc_init_queues() only creates the required data structures,
+	 * and doesn't touch the HWC device.
+	 */
 	err = mana_hwc_init_queues(hwc, HW_CHANNEL_VF_BOOTSTRAP_QUEUE_DEPTH,
 				   HW_CHANNEL_MAX_REQUEST_SIZE,
 				   HW_CHANNEL_MAX_RESPONSE_SIZE);
@@ -747,42 +739,50 @@ int mana_hwc_create_channel(struct gdma_context *gc)
 
 	return 0;
 out:
-	kfree(hwc);
+	mana_hwc_destroy_channel(gc);
 	return err;
 }
 
 void mana_hwc_destroy_channel(struct gdma_context *gc)
 {
 	struct hw_channel_context *hwc = gc->hwc.driver_data;
-	struct hwc_caller_ctx *ctx;
 
-	mana_smc_teardown_hwc(&gc->shm_channel, false);
+	if (!hwc)
+		return;
 
-	ctx = hwc->caller_ctx;
-	kfree(ctx);
+	/* gc->max_num_cqs is set in mana_hwc_init_event_handler(). If it's
+	 * non-zero, the HWC worked and we should tear down the HWC here.
+	 */
+	if (gc->max_num_cqs > 0) {
+		mana_smc_teardown_hwc(&gc->shm_channel, false);
+		gc->max_num_cqs = 0;
+	}
+
+	if (hwc->txq)
+		mana_hwc_destroy_wq(hwc, hwc->txq);
+
+	if (hwc->rxq)
+		mana_hwc_destroy_wq(hwc, hwc->rxq);
+
+	if (hwc->cq)
+		mana_hwc_destroy_cq(hwc->gdma_dev->gdma_context, hwc->cq);
+
+	kfree(hwc->caller_ctx);
 	hwc->caller_ctx = NULL;
-
-	mana_hwc_destroy_wq(hwc, hwc->txq);
-	hwc->txq = NULL;
-
-	mana_hwc_destroy_wq(hwc, hwc->rxq);
-	hwc->rxq = NULL;
-
-	mana_hwc_destroy_cq(hwc->gdma_dev->gdma_context, hwc->cq);
-	hwc->cq = NULL;
 
 	mana_gd_free_res_map(&hwc->inflight_msg_res);
 
 	hwc->num_inflight_msg = 0;
 
-	if (hwc->gdma_dev->pdid != INVALID_PDID) {
-		hwc->gdma_dev->doorbell = INVALID_DOORBELL;
-		hwc->gdma_dev->pdid = INVALID_PDID;
-	}
+	hwc->gdma_dev->doorbell = INVALID_DOORBELL;
+	hwc->gdma_dev->pdid = INVALID_PDID;
 
 	kfree(hwc);
 	gc->hwc.driver_data = NULL;
 	gc->hwc.gdma_context = NULL;
+
+	vfree(gc->cq_table);
+	gc->cq_table = NULL;
 }
 
 int mana_hwc_send_request(struct hw_channel_context *hwc, u32 req_len,

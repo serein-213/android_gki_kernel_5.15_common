@@ -154,7 +154,7 @@ static int ad5686_write_raw(struct iio_dev *indio_dev,
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		if (val > (1 << chan->scan_type.realbits) || val < 0)
+		if (val >= (1 << chan->scan_type.realbits) || val < 0)
 			return -EINVAL;
 
 		mutex_lock(&st->lock);
@@ -423,6 +423,12 @@ static const struct ad5686_chip_info ad5686_chip_info_tbl[] = {
 	},
 	[ID_AD5694R] = {
 		.channels = ad5684_channels,
+		.int_vref_mv = 2500,
+		.num_channels = 4,
+		.regmap_type = AD5686_REGMAP,
+	},
+	[ID_AD5695R] = {
+		.channels = ad5685r_channels,
 		.int_vref_mv = 2500,
 		.num_channels = 4,
 		.regmap_type = AD5686_REGMAP,

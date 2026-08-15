@@ -32,6 +32,9 @@
  */
 
 #define CPUFREQ_ETERNAL			(-1)
+
+#define CPUFREQ_DEFAULT_TRANSITION_LATENCY_NS	NSEC_PER_MSEC
+
 #define CPUFREQ_NAME_LEN		16
 /* Print length for names. Extra 1 space for accommodating '\n' in prints */
 #define CPUFREQ_NAME_PLEN		(CPUFREQ_NAME_LEN + 1)
@@ -1011,11 +1014,10 @@ static inline int cpufreq_table_count_valid_entries(const struct cpufreq_policy 
 static inline int parse_perf_domain(int cpu, const char *list_name,
 				    const char *cell_name)
 {
-	struct device_node *cpu_np;
 	struct of_phandle_args args;
 	int ret;
 
-	cpu_np = of_cpu_device_node_get(cpu);
+	struct device_node *cpu_np __free(device_node) = of_cpu_device_node_get(cpu);
 	if (!cpu_np)
 		return -ENODEV;
 
@@ -1023,8 +1025,6 @@ static inline int parse_perf_domain(int cpu, const char *list_name,
 					 &args);
 	if (ret < 0)
 		return ret;
-
-	of_node_put(cpu_np);
 
 	return args.args[0];
 }
