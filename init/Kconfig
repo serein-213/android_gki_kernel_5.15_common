@@ -201,22 +201,6 @@ config LOCALVERSION_AUTO
 
 	  which is done within the script "scripts/setlocalversion".)
 
-menuconfig UNAME_OVERRIDE
-	bool "Override uname output for specific processes"
-	help
-	  This will modify struct new_utsname->release string's return value
-	  to another string on a specified process.
-
-if UNAME_OVERRIDE
-
-config UNAME_OVERRIDE_TARGET
-	string "Target process' cmdline for uname override"
-
-config UNAME_OVERRIDE_STRING
-	string "New uname's release string for uname override"
-
-endif
-
 config BUILD_SALT
 	string "Build ID Salt"
 	default ""
@@ -690,7 +674,7 @@ endmenu # "CPU/Task time and stats accounting"
 
 config CPU_ISOLATION
 	bool "CPU isolation"
-	depends on SMP || COMPILE_TEST
+	depends on SMP
 	default y
 	help
 	  Make sure that CPUs running critical tasks are not disturbed by
@@ -1401,6 +1385,7 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 
 config CC_OPTIMIZE_FOR_PERFORMANCE_O3
 	bool "Optimize more for performance (-O3)"
+	depends on ARC
 	help
 	  Choosing this option will pass "-O3" to your compiler to optimize
 	  the kernel yet more for performance.

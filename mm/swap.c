@@ -489,8 +489,13 @@ void lru_cache_add(struct page *page)
 	trace_android_vh_lru_cache_add(page);
 	/* see the comment in lru_gen_add_page() */
 	if (lru_gen_enabled() && !PageUnevictable(page) &&
-	    lru_gen_in_fault() && !(current->flags & PF_MEMALLOC))
-		SetPageActive(page);
+	    lru_gen_in_fault() && !(current->flags & PF_MEMALLOC)) {
+		bool bypass = false;
+
+		trace_android_vh_lru_cache_add_page_activate(page, &bypass);
+		if (!bypass)
+			SetPageActive(page);
+	}
 
 	get_page(page);
 	local_lock(&lru_pvecs.lock);
@@ -1169,7 +1174,13 @@ EXPORT_SYMBOL(pagevec_lookup_range_tag);
  */
 void __init swap_setup(void)
 {
-	page_cluster = 1;
+	unsigned long megs = totalram_pages() >> (20 - PAGE_SHIFT);
+
+	/* Use a smaller cluster for small-memory machines */
+	if (megs < 16)
+		page_cluster = 2;
+	else
+		page_cluster = 3;
 	/*
 	 * Right now other parts of the system means that we
 	 * _really_ don't want to cluster much more

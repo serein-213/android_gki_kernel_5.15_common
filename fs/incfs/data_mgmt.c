@@ -432,7 +432,7 @@ static ssize_t zstd_decompress_safe(struct mount_info *mi,
 		return result;
 
 	if (!mi->mi_zstd_stream) {
-		unsigned int workspace_size = zstd_dstream_workspace_bound(
+		unsigned int workspace_size = ZSTD_DStreamWorkspaceBound(
 						INCFS_DATA_FILE_BLOCK_SIZE);
 		void *workspace = kvmalloc(workspace_size, GFP_NOFS);
 		ZSTD_DStream *stream;
@@ -442,7 +442,7 @@ static ssize_t zstd_decompress_safe(struct mount_info *mi,
 			goto out;
 		}
 
-		stream = zstd_init_dstream(INCFS_DATA_FILE_BLOCK_SIZE, workspace,
+		stream = ZSTD_initDStream(INCFS_DATA_FILE_BLOCK_SIZE, workspace,
 				  workspace_size);
 		if (!stream) {
 			kvfree(workspace);
@@ -472,11 +472,8 @@ static ssize_t decompress(struct mount_info *mi,
 
 	switch (alg) {
 	case INCFS_BLOCK_COMPRESSED_LZ4:
-#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
-	result = LZ4_arm64_decompress_safe(src.data, dst.data, src.len, dst.len, false);
-#else
-	result = LZ4_decompress_safe(src.data, dst.data, src.len, dst.len);
-#endif
+		result = LZ4_decompress_safe(src.data, dst.data, src.len,
+					     dst.len);
 		if (result < 0)
 			return -EBADMSG;
 		return result;
@@ -664,7 +661,7 @@ static void log_block_read(struct mount_info *mi, incfs_uuid_t *id,
 	++head->current_record_no;
 
 	spin_unlock(&log->rl_lock);
-	queue_delayed_work(system_power_efficient_wq, &log->ml_wakeup_work, msecs_to_jiffies(16));
+	schedule_delayed_work(&log->ml_wakeup_work, msecs_to_jiffies(16));
 }
 
 static int validate_hash_tree(struct backing_file_context *bfc, struct file *f,

@@ -257,6 +257,9 @@ static int mctp_sk_hash(struct sock *sk)
 
 	msk = container_of(sk, struct mctp_sock, sk);
 
+	/* Bind lookup runs under RCU, remain live during that. */
+	sock_set_flag(sk, SOCK_RCU_FREE);
+
 	mutex_lock(&net->mctp.bind_lock);
 
 	/* Prevent duplicate binds. */

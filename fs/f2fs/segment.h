@@ -422,7 +422,7 @@ static inline void seg_info_to_sit_page(struct f2fs_sb_info *sbi,
 	int i;
 
 	raw_sit = (struct f2fs_sit_block *)page_address(page);
-	clear_page(raw_sit);
+	memset(raw_sit, 0, PAGE_SIZE);
 	for (i = 0; i < end - start; i++) {
 		rs = &raw_sit->entries[i];
 		se = get_seg_entry(sbi, start + i);
@@ -692,7 +692,7 @@ static inline int utilization(struct f2fs_sb_info *sbi)
  * F2FS_IPU_DISABLE - disable IPU. (=default option in LFS mode)
  */
 #define DEF_MIN_IPU_UTIL	70
-#define DEF_MIN_FSYNC_BLOCKS	20
+#define DEF_MIN_FSYNC_BLOCKS	8
 #define DEF_MIN_HOT_BLOCKS	16
 
 #define SMALL_VOLUME_SEGMENTS	(16 * 512)	/* 16GB */
